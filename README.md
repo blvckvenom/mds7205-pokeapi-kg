@@ -109,6 +109,27 @@ Dos resultados del ML hay que leerlos con cuidado, y se explican en el reporte:
 - La clasificacion de tipo llega a ~0.82, pero buena parte es el movepool (efecto STAB): con
   solo las stats base cae a ~0.20.
 
+## Capa competitiva (extra)
+
+Extension hacia el Pokemon competitivo (Smogon gen9 OU). El reporte vive en
+`analysis/reporte_competitivo.ipynb` (.pdf) e incluye:
+
+- **Consultas de teambuilding** (`pipeline/queries_competitivo.cypher`) sobre el cuadro de tipos y
+  los stats: mejores tipados defensivos, cores, vulnerabilidad a Stealth Rock, checks/counters,
+  revenge-killers, speed tiers, y una calculadora de dano en Cypher puro que coincide con el calc
+  oficial de Showdown.
+- **Capa de meta real**: usage stats de Smogon montadas como subgrafo (`USED_IN`, `RUNS_MOVE`,
+  `TEAMMATE_OF`, `CHECKED_BY`...). Se carga con `python pipeline/06_smogon.py` (baja un JSON de
+  smogon.com y normaliza los nombres a los identifiers de PokeAPI).
+- **Tres modelos predictivos** evaluados de forma adversarial (`analysis/ml_competitivo.py` y
+  `analysis/ml.py`): viabilidad en OU (el grafo sube ~9 pts de AUC sobre el baseline de BST entre
+  Pokemon comparables), recomendacion de teammates (hallazgo: la complementariedad de tipos NO
+  predice el co-uso real, la co-ocurrencia si), y clustering de roles por stats. Cada modelo trae
+  control de fuga (con el label shuffleado el AUC cae a ~0.5) y se mide out-of-fold.
+
+Para regenerarlo: cargar el grafo, correr `python pipeline/06_smogon.py`, y luego
+`python analysis/build_competitivo.py && jupyter nbconvert --to notebook --execute analysis/reporte_competitivo.ipynb`.
+
 ## Datos
 
 Los datos vienen de [PokeAPI](https://github.com/PokeAPI/pokeapi) (licencia BSD). El clon no se

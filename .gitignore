@@ -11,6 +11,6 @@ __pycache__/
 *.pyc
 .ipynb_checkpoints/
 
-# Artefactos regenerables (el reporte.ipynb y reporte.pdf si se versionan).
+# Artefactos regenerables (los .ipynb y .pdf si se versionan).
 analysis/img/
-analysis/reporte.html
+analysis/*.html
