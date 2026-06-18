@@ -175,5 +175,66 @@ plt.xlabel("FPR"); plt.ylabel("TPR"); plt.legend(loc="lower right")
 plt.title("Link prediction crianza: topologia vs atributos")
 plt.tight_layout(); plt.savefig(f"{IMG}/breeding_roc.png", dpi=110); plt.close()
 
+# ===================== 3. CLUSTERING DE ROLES COMPETITIVOS =====================
+# No supervisado sobre los 6 stats base: descubre arquetipos (sweeper/muro/tanque/pivot) sin
+# umbrales a mano y los cruza con el tipo. Caveat honesto: es stat-spread crudo, el rol meta real
+# depende del typing, items y EVs que no tenemos; sirve como esqueleto, no como tier de Smogon.
+print("\n" + "=" * 60, "\n3. CLUSTERING DE ROLES POR STATS BASE\n", "=" * 60)
+from sklearn.cluster import KMeans
+from sklearn.preprocessing import StandardScaler
+
+stat_order = ["hp", "attack", "defense", "special-attack", "special-defense", "speed"]
+roles = df("""
+MATCH (p:Pokemon {is_default:true})-[r:HAS_STAT]->(s:Stat)
+RETURN p.id AS pokemon, p.identifier AS nombre, s.identifier AS stat, r.base_stat AS v
+""").pivot_table(index=["pokemon", "nombre"], columns="stat", values="v", fill_value=0)[stat_order]
+
+# Clusterizar sobre PROPORCIONES (forma del spread, no poder bruto): asi un frail-veloz y un
+# muro-lento caen en clusters distintos sin importar su BST.
+prop = roles[stat_order].div(roles[stat_order].sum(axis=1), axis=0)
+km = KMeans(n_clusters=5, random_state=42, n_init=10).fit(prop.values)
+roles["cluster"] = km.labels_
+cent = prop.groupby(km.labels_).mean()  # centroides en proporciones
+
+# Etiqueta data-driven: eje dominante (z-score entre clusters) + sesgo fisico/especial.
+ejes = pd.DataFrame({
+    "speed": cent["speed"],
+    "ofensa": cent["attack"] + cent["special-attack"],
+    "bulk": cent["hp"] + cent["defense"] + cent["special-defense"],
+}, index=cent.index)
+zejes = (ejes - ejes.mean()) / ejes.std()
+def etiqueta(c):
+    z = zejes.loc[c]; dom = z.idxmax()
+    fis = cent.loc[c, "attack"] >= cent.loc[c, "special-attack"]
+    if dom == "speed":  return "barredor veloz" if ejes.loc[c, "ofensa"] >= ejes.mean()["ofensa"] else "veloz frágil"
+    if dom == "bulk":   return "muro" if z["speed"] < 0 else "tanque"
+    return "atacante físico" if fis else "atacante especial"
+roles["rol"] = roles["cluster"].map({c: etiqueta(c) for c in cent.index})
+print(f"{len(roles)} pokemon en 5 clusters:")
+print(roles["rol"].value_counts().to_string())
+for rol in sorted(roles["rol"].unique()):
+    ej = roles[roles["rol"] == rol].index.get_level_values("nombre")[:6].tolist()
+    print(f"  {rol}: {', '.join(ej)}")
+
+tipos1 = df("""
+MATCH (p:Pokemon {is_default:true})-[r:HAS_TYPE {slot:1}]->(t:Type)
+RETURN p.id AS pokemon, t.identifier AS tipo
+""").set_index("pokemon")["tipo"]
+roles_t = roles.reset_index().merge(tipos1.rename("tipo"), on="pokemon")
+print("\ntipo primario dominante por rol:")
+for rol, g in roles_t.groupby("rol"):
+    top = g["tipo"].value_counts().head(3)
+    print(f"  {rol}: {', '.join(f'{k}({v})' for k, v in top.items())}")
+
+roles["ofensa"] = roles["attack"] + roles["special-attack"]
+roles["bulk"] = roles["hp"] + roles["defense"] + roles["special-defense"]
+plt.figure(figsize=(7, 5))
+for rol in sorted(roles["rol"].unique()):
+    sub = roles[roles["rol"] == rol]
+    plt.scatter(sub["bulk"], sub["ofensa"], s=10, label=rol, alpha=0.6)
+plt.xlabel("bulk (hp+def+sp.def)"); plt.ylabel("ofensa (atk+sp.atk)"); plt.legend(fontsize=8)
+plt.title("Clusters de rol por stats base")
+plt.tight_layout(); plt.savefig(f"{IMG}/roles_cluster.png", dpi=110); plt.close()
+
 print(f"\nFiguras en {IMG}/")
 driver.close()
