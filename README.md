@@ -139,3 +139,50 @@ Para regenerarlo: cargar el grafo, correr `python pipeline/06_smogon.py`, y lueg
 
 Los datos vienen de [PokeAPI](https://github.com/PokeAPI/pokeapi) (licencia BSD). El clon no se
 versiona en este repo; `run.py` lo descarga.
+
+## Análisis integrado (PokeAPI + Smogon)
+
+Se ha añadido un reporte integrado que combina el grafo estructural de PokeAPI con la
+capa competitiva de Smogon. El flujo recomendado es el siguiente:
+
+1. Levantar Neo4j y cargar el grafo base:
+
+```powershell
+python run.py
+```
+
+2. Cargar la capa competitiva de Smogon (usage stats):
+
+```powershell
+python pipeline/06_smogon.py
+```
+
+3. Generar el notebook integrado:
+
+```powershell
+python analysis/build_integrated_report.py
+```
+
+4. Ejecutar el notebook y guardar los resultados en el archivo:
+
+```powershell
+jupyter nbconvert --to notebook --execute --inplace --ExecutePreprocessor.timeout=600 analysis/reporte_integrado.ipynb
+```
+
+5. Exportar el notebook a HTML:
+
+```powershell
+jupyter nbconvert --to html analysis/reporte_integrado.ipynb
+```
+
+6. Ejecutar los experimentos ML integrados:
+
+```powershell
+python analysis/graph_ml_integrated.py
+```
+
+Notas:
+- Docker Desktop debe estar abierto para que `run.py` levante Neo4j con GDS.
+- No se eliminó ningún reporte previo (`reporte.ipynb`, `reporte_competitivo.ipynb`).
+- Las consultas avanzadas de la integración están en `pipeline/queries_integrated_graph.cypher`.
+
