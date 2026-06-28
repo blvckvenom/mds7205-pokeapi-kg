@@ -12,7 +12,6 @@ Luego ejecutar con nbconvert:
 """
 import nbformat as nbf
 import os
-
 ROOT = os.path.dirname(__file__)
 OUT = os.path.join(ROOT, 'reporte_integrado.ipynb')
 
@@ -53,12 +52,31 @@ La lectura estratégica del informe se organiza en seis preguntas de
 investigación. Cada bloque mantiene consultas livianas o proyecciones ya usadas
 por el reporte, de modo que el cuaderno siga ejecutando dentro del límite de
 120 segundos.
+
+Metodológicamente, el reporte combina tres niveles. Las preguntas 1, 2, 3 y 5
+se responden principalmente con consultas complejas al grafo: patrones Cypher,
+agregaciones, recorridos, rankings y caminos explicativos. La pregunta 4 usa un
+algoritmo de grafos para detectar comunidades, pero no es ML predictivo. La
+pregunta 6 es la única sección de predicción supervisada y se presenta como un
+experimento controlado sin fuga de información.
 """)
 
-code("""import pandas as pd
+code("""import warnings
+import pandas as pd
 import matplotlib.pyplot as plt
 from neo4j import GraphDatabase
 from IPython.display import display, Markdown
+
+warnings.filterwarnings('ignore', category=DeprecationWarning)
+warnings.filterwarnings('ignore', message='.*deprecated.*')
+try:
+    from neo4j.exceptions import Neo4jWarning
+    warnings.filterwarnings('ignore', category=Neo4jWarning)
+except Exception:
+    pass
+
+pd.set_option('display.max_colwidth', 120)
+pd.set_option('display.width', 140)
 
 driver = GraphDatabase.driver('bolt://localhost:7687', auth=None)
 
@@ -135,18 +153,29 @@ Las preguntas que guían el reporte son:
 3. ¿Qué tipos o combinaciones de tipos ofrecen mejores perfiles ofensivos y defensivos?
 4. ¿Qué cores competitivos emergen en la red `TEAMMATE_OF` y qué los caracteriza?
 5. ¿Qué cadenas de relaciones explican por qué un Pokémon encaja en una estrategia competitiva?
-6. ¿Puede el grafo anticipar qué Pokémon podrían funcionar juntos en un equipo competitivo?
+6. ¿Puede el grafo anticipar compatibilidad competitiva entre Pokémon usando solo información no derivada del uso competitivo?
 
 **Correspondencia entre preguntas, análisis y utilidad**
 
 | Pregunta | Análisis usado | Parte del grafo | Utilidad estratégica | Limitación |
 |---|---|---|---|---|
-| 1. Centralidad competitiva | PageRank en `TEAMMATE_OF` y frecuencia de recursos usados | `Pokemon`, `Move`, `Ability`, `Item`, `Format` | Priorizar amenazas, recursos de preparación y piezas alrededor de las cuales se organiza el metajuego | La centralidad depende de los datos de uso de Smogon cargados y no reemplaza el juicio competitivo |
-| 2. Sustitutos estratégicos | Similitud por repertorio de movimientos y tipos compartidos | `Pokemon`, `Move`, `Type` | Proponer alternativas cuando una pieza no está disponible o no calza con el equipo | No modela EVs, naturalezas, objetos ni rol exacto en batalla |
-| 3. Perfiles ofensivos y defensivos | Perfiles individuales, perfiles dobles, ventajas x4 y resistencias x0.25 | `Type`, `EFFECTIVENESS`, `SUPER_EFFECTIVE`, `Pokemon` | Comparar cobertura ofensiva, debilidades, resistencias y neutralidades de tipos | No incorpora habilidades, objetos, movimientos concretos ni condiciones dinámicas de combate |
-| 4. Cores competitivos | Louvain sobre la red `TEAMMATE_OF` | `Pokemon`, `TEAMMATE_OF`, `RUNS_MOVE`, `USED_IN` | Identificar grupos de Pokémon que aparecen juntos y caracterizar su plan de juego | Una comunidad sugiere core, pero no prueba por sí sola un arquetipo cerrado |
+| 1. Centralidad competitiva | Agregaciones Cypher sobre `TEAMMATE_OF`, pesos, diversidad relacional y recursos usados | `Pokemon`, `Move`, `Ability`, `Item`, `Format` | Priorizar amenazas, recursos de preparación y piezas alrededor de las cuales se organiza el metajuego | La conectividad observada depende de los datos de Smogon cargados y no reemplaza el juicio competitivo |
+| 2. Sustitutos estratégicos | Similitud por movimientos usados competitivamente, tipos y estadísticas | `Pokemon`, `Move`, `Type`, `RUNS_MOVE`, `HAS_STAT` | Proponer candidatos funcionalmente parecidos para revisión de equipo | No modela EVs, naturalezas, objetos ni rol exacto en batalla; si falta uso competitivo de movimientos, la similitud sería solo aproximada |
+| 3. Contexto estructural de tipos | Perfiles individuales, perfiles dobles, ventajas x4 y resistencias x0.25 | `Type`, `EFFECTIVENESS`, `SUPER_EFFECTIVE`, `Pokemon` | Cruzar reglas conocidas de efectividad con combinaciones y Pokémon reales del grafo | No es un descubrimiento competitivo por sí solo; no incorpora habilidades, objetos, movimientos concretos ni condiciones dinámicas de combate |
+| 4. Comunidades competitivas exploratorias | Louvain sobre la red `TEAMMATE_OF`, etiquetas prudentes y confianza de etiqueta | `Pokemon`, `TEAMMATE_OF`, `RUNS_MOVE`, `USED_IN` | Formular hipótesis sobre agrupaciones de Pokémon que aparecen juntos | Una comunidad sugiere una hipótesis de core, pero no prueba por sí sola un arquetipo cerrado ni exclusivo de Gen 9 OU |
 | 5. Cadenas explicativas | Rutas acotadas entre Pokémon, movimientos, tipos y compañeros | `Pokemon`, `Move`, `Type`, `TEAMMATE_OF` | Explicar por qué una pieza encaja en una estrategia y qué sinergias activa | Son ejemplos interpretables, no una enumeración exhaustiva de todos los caminos |
-| 6. Compatibilidad competitiva | Comparación entre modelos base y modelos con señales relacionales | Grafo integrado, atributos, movimientos, habilidades y variables derivadas | Evaluar si el grafo aporta señales para anticipar qué Pokémon podrían funcionar juntos | Las métricas altas deben leerse con cautela si las señales competitivas están demasiado cerca de la relación que se quiere predecir |
+| 6. Compatibilidad sin fuga | Experimento predictivo de `TEAMMATE_OF` con variables no derivadas del uso competitivo | `Pokemon`, `Type`, `Move`, `Ability`, `HAS_STAT`, `CAN_LEARN` | Evaluar si atributos y relaciones base anticipan parcialmente compatibilidad competitiva | No usa señales competitivas como entrada; las métricas pueden ser más bajas, pero son metodológicamente más defendibles |
+
+**Clasificación metodológica de las preguntas**
+
+| Pregunta | Tipo de análisis | Cómo se responde | Usa ML | Usa algoritmo de grafos | Qué aporta el grafo |
+|---|---|---|---|---|---|
+| P1 | Consulta compleja | Agregaciones sobre relaciones competitivas, compañeros distintos, pesos y diversidad relacional | No | No | Permite medir conectividad relacional, no solo atributos aislados |
+| P2 | Consulta compleja de similitud | Cruza movimientos, stats, tipos, habilidades y exclusión evolutiva | No | No | Permite encontrar sustitutos conectando atributos dispersos |
+| P3 | Consulta compleja de perfiles de tipo | Usa efectividades, combinaciones, cobertura y Pokémon reales | No | No | Conecta reglas de tipo con especies y combinaciones observadas |
+| P4 | Algoritmo de grafos / comunidades | Usa Louvain sobre `TEAMMATE_OF` como análisis estructural exploratorio | No | Sí | Revela agrupaciones relacionales exploratorias |
+| P5 | Consulta compleja de caminos | Usa recorridos explicativos entre Pokémon, movimientos, tipos, habilidades y compañeros | No | No | Permite explicar cadenas estratégicas |
+| P6 | ML / predicción controlada | Clasifica pares `TEAMMATE_OF` sin variables con fuga de información | Sí | No como método principal | Permite evaluar compatibilidad con variables relacionales no derivadas del uso competitivo |
 
 **Alcance temporal**
 
@@ -159,73 +188,132 @@ con datos de Pokémon Champions debe quedar como trabajo futuro.
 md("""## 4. Análisis estratégico del grafo
 
 Los siguientes bloques responden directamente a las preguntas de investigación.
-Las consultas priorizan resultados interpretables y acotados; cuando se usa GDS,
-se reutilizan proyecciones livianas que ya forman parte del reporte ejecutable.
+Las preguntas 1, 2, 3 y 5 priorizan consultas interpretables y acotadas. La
+pregunta 4 se separa explícitamente como análisis estructural con algoritmo de
+grafos, y la pregunta 6 como experimento predictivo controlado.
 """)
 
 md("""### 4.1 Pokémon más influyentes en la red de equipos
 
-Primero se proyecta la red `TEAMMATE_OF` como grafo no dirigido. PageRank
-identifica Pokémon influyentes. En lenguaje simple, PageRank mide si un Pokémon
-está conectado con otros Pokémon que también son importantes dentro de la red.
+Esta pregunta se responde como consulta compleja al grafo, no como algoritmo de
+grafos ni como ML. La influencia se mide mediante conectividad relacional
+observada: cantidad de compañeros distintos en `TEAMMATE_OF`, peso total y
+promedio de co-uso cuando existe, diversidad de tipos de compañeros y recursos
+competitivos asociados como movimientos, habilidades y objetos. La idea es
+construir una centralidad descriptiva por agregación de relaciones.
 """)
 
-code("""run("CALL gds.graph.drop('teammates', false)")
-run('''
-CALL gds.graph.project(
-  'teammates',
-  'Pokemon',
-  {
-    TEAMMATE_OF: {
-      orientation: 'UNDIRECTED'
-    }
+code("""res = df('''
+MATCH (p:Pokemon {is_default:true})
+CALL {
+  WITH p
+  OPTIONAL MATCH (p)-[tm:TEAMMATE_OF]-(aliado:Pokemon)
+  WITH collect(DISTINCT aliado) AS aliados, collect(DISTINCT tm) AS relaciones
+  CALL {
+    WITH aliados
+    UNWIND aliados AS aliado
+    OPTIONAL MATCH (aliado)-[:HAS_TYPE]->(tipo_aliado:Type)
+    RETURN count(DISTINCT tipo_aliado) AS diversidad_tipos_companeros
   }
-)
-''')
-res = df('''
-CALL gds.pageRank.stream('teammates') YIELD nodeId, score
-WITH gds.util.asNode(nodeId) AS p, score
+  WITH aliados, relaciones, diversidad_tipos_companeros,
+       reduce(total = 0.0, rel IN relaciones | total + coalesce(rel.pct, 1.0)) AS peso_total
+  RETURN size(aliados) AS companeros_distintos,
+         size(relaciones) AS relaciones_companero,
+         round(peso_total * 100) / 100.0 AS peso_total_companeros,
+         CASE WHEN size(relaciones) = 0 THEN 0.0
+              ELSE round((peso_total / size(relaciones)) * 100) / 100.0
+         END AS peso_promedio_companeros,
+         diversidad_tipos_companeros
+}
+CALL {
+  WITH p
+  OPTIONAL MATCH (p)-[:RUNS_MOVE]->(m:Move)
+  RETURN count(DISTINCT m) AS movimientos_usados
+}
+CALL {
+  WITH p
+  OPTIONAL MATCH (p)-[:USES_ABILITY]->(ab:Ability)
+  RETURN count(DISTINCT ab) AS habilidades_usadas
+}
+CALL {
+  WITH p
+  OPTIONAL MATCH (p)-[:HOLDS_ITEM]->(it:Item)
+  RETURN count(DISTINCT it) AS objetos_usados
+}
 OPTIONAL MATCH (p)-[u:USED_IN]->(:Format {tier:'gen9ou'})
+WITH p,
+     companeros_distintos,
+     relaciones_companero,
+     peso_total_companeros,
+     peso_promedio_companeros,
+     diversidad_tipos_companeros,
+     movimientos_usados,
+     habilidades_usadas,
+     objetos_usados,
+     coalesce(max(u.usage), 0.0) AS uso_smogon
+WITH p,
+     companeros_distintos,
+     relaciones_companero,
+     peso_total_companeros,
+     peso_promedio_companeros,
+     diversidad_tipos_companeros,
+     movimientos_usados,
+     habilidades_usadas,
+     objetos_usados,
+     uso_smogon,
+     round((
+       companeros_distintos * 2.0 +
+       peso_total_companeros +
+       diversidad_tipos_companeros * 1.5 +
+       movimientos_usados * 0.5 +
+       habilidades_usadas +
+       objetos_usados
+     ) * 100) / 100.0 AS puntaje_conectividad
 RETURN p.identifier AS pokemon,
-       round(score * 100000) / 100000.0 AS pagerank_competitivo,
-       round(coalesce(u.usage, 0.0) * 100) / 100.0 AS uso_smogon
-ORDER BY pagerank_competitivo DESC
+       companeros_distintos,
+       relaciones_companero,
+       peso_total_companeros,
+       peso_promedio_companeros,
+       diversidad_tipos_companeros,
+       movimientos_usados,
+       habilidades_usadas,
+       objetos_usados,
+       round(uso_smogon * 100) / 100.0 AS uso_smogon,
+       puntaje_conectividad
+ORDER BY puntaje_conectividad DESC, companeros_distintos DESC, peso_total_companeros DESC
 LIMIT 20
 ''')
 display(res)
 if not res.empty:
-    ax = res.head(10).sort_values('pagerank_competitivo').plot.barh(
-        x='pokemon', y='pagerank_competitivo', legend=False, figsize=(8, 4)
+    ax = res.head(10).sort_values('puntaje_conectividad').plot.barh(
+        x='pokemon', y='puntaje_conectividad', legend=False, figsize=(8, 4)
     )
-    ax.set_title('Top 10 Pokémon más influyentes')
-    ax.set_xlabel('Influencia en la red')
+    ax.set_title('Top 10 Pokémon por conectividad relacional')
+    ax.set_xlabel('Puntaje descriptivo de conectividad')
     ax.set_ylabel('Pokémon')
     plt.tight_layout()
     plt.show()
 if not res.empty:
     nombres = lista_texto(res['pokemon'])
     display(Markdown(
-        f"En los primeros lugares aparecen {nombres}. Estos Pokémon quedan arriba porque no solo tienen conexiones en la red de compañeros, "
-        "sino porque esas conexiones los acercan a otras piezas relevantes. En términos estratégicos, conviene leerlos como posibles ejes del formato: "
-        "piezas que ayudan a unir equipos, formar cores o condicionar la preparación defensiva. El ranking no prueba que sean los mejores en combate, "
-        "pero sí señala que ocupan posiciones estructurales en la red analizada."
+        f"En los primeros lugares aparecen {nombres}. Estos Pokémon quedan arriba porque agregan muchas conexiones observadas, pesos de co-uso, "
+        "diversidad de compañeros y recursos competitivos asociados. En términos estratégicos, conviene leerlos como piezas con presencia relacional amplia: "
+        "no necesariamente los mejores en combate, sino Pokémon que aparecen conectados con varias partes del grafo competitivo."
     ))
 """)
-
 md("""En este análisis, la influencia no debe entenderse simplemente como
-popularidad o fuerza individual. Aquí se mide como centralidad dentro de la red
-de compañeros de equipo: un Pokémon obtiene un valor más alto cuando aparece
-conectado con muchas combinaciones relevantes y, especialmente, cuando sus
-conexiones también involucran a otros Pokémon importantes dentro de la red. Por
-eso, un valor mayor no significa necesariamente que ese Pokémon sea mejor en
-batalla, sino que cumple un rol más estructural en los equipos observados.
+popularidad o fuerza individual. Aquí se mide como conectividad relacional
+descriptiva: un Pokémon obtiene un valor más alto cuando aparece conectado con
+muchos compañeros distintos, cuando esas relaciones tienen mayor peso observado
+y cuando sus conexiones cubren una diversidad mayor de tipos y recursos. Todo se
+calcula con consultas Cypher y agregaciones, sin PageRank ni modelos predictivos.
 
 La tabla y el gráfico permiten identificar piezas que ayudan a organizar el
-metajuego competitivo. Si un Pokémon aparece con alta centralidad, puede ser
-porque encaja en muchos equipos distintos, habilita estrategias comunes o forma
-parte de cores usados con frecuencia. En términos prácticos, estos resultados
-sirven para decidir qué amenazas conviene estudiar primero al preparar
-respuestas defensivas o al analizar cómo se construyen equipos en el formato.
+metajuego competitivo. Si un Pokémon aparece con alta conectividad, puede ser
+porque encaja con muchos compañeros, porque tiene vínculos de co-uso más fuertes
+o porque concentra recursos frecuentes. En términos prácticos, estos resultados
+sirven para decidir qué amenazas conviene estudiar primero al preparar respuestas
+defensivas o al analizar cómo se construyen equipos en el formato.
 
 Esta medida depende de las relaciones cargadas desde Smogon y no incorpora por
 sí sola detalles como objetos, EVs, movimientos específicos o decisiones dentro
@@ -272,26 +360,112 @@ conjuntos posibles, por lo que debe leerse como una guía inicial y no como una
 descripción completa de cada set competitivo.
 """)
 
+md("""#### Contraste entre uso competitivo e influencia en el grafo
+
+El uso competitivo y la centralidad no miden lo mismo. El uso indica con qué
+frecuencia aparece un Pokémon en los datos de Smogon, mientras que la
+conectividad relacional resume cuántos compañeros distintos tiene, qué peso
+tienen esas relaciones y qué diversidad de vínculos concentra. Por eso, un
+Pokémon puede ser muy usado y estar concentrado en ciertos equipos, o puede
+tener menor uso pero conectar varias zonas relevantes del grafo.
+""")
+
+code("""contraste = df('''
+MATCH (p:Pokemon {is_default:true})
+CALL {
+  WITH p
+  OPTIONAL MATCH (p)-[tm:TEAMMATE_OF]-(aliado:Pokemon)
+  WITH collect(DISTINCT aliado) AS aliados, collect(DISTINCT tm) AS relaciones
+  CALL {
+    WITH aliados
+    UNWIND aliados AS aliado
+    OPTIONAL MATCH (aliado)-[:HAS_TYPE]->(tipo_aliado:Type)
+    RETURN count(DISTINCT tipo_aliado) AS diversidad_tipos_companeros
+  }
+  RETURN size(aliados) AS companeros_distintos,
+         round(reduce(total = 0.0, rel IN relaciones | total + coalesce(rel.pct, 1.0)) * 100) / 100.0 AS peso_total_companeros,
+         diversidad_tipos_companeros
+}
+CALL {
+  WITH p
+  OPTIONAL MATCH (p)-[:RUNS_MOVE]->(m:Move)
+  RETURN count(DISTINCT m) AS movimientos_usados
+}
+OPTIONAL MATCH (p)-[u:USED_IN]->(:Format {tier:'gen9ou'})
+WITH p.identifier AS pokemon,
+     coalesce(max(u.usage), 0.0) AS uso_smogon,
+     round((
+       companeros_distintos * 2.0 +
+       peso_total_companeros +
+       diversidad_tipos_companeros * 1.5 +
+       movimientos_usados * 0.5
+     ) * 100) / 100.0 AS puntaje_conectividad
+WITH collect({pokemon:pokemon, puntaje_conectividad:puntaje_conectividad, uso_smogon:uso_smogon}) AS filas
+UNWIND filas AS r
+WITH r, filas,
+     1 + size([x IN filas WHERE x.uso_smogon > r.uso_smogon]) AS ranking_uso,
+     1 + size([x IN filas WHERE x.puntaje_conectividad > r.puntaje_conectividad]) AS ranking_conectividad
+WITH r.pokemon AS pokemon,
+     round(r.uso_smogon * 100) / 100.0 AS uso_smogon,
+     r.puntaje_conectividad AS puntaje_conectividad,
+     ranking_uso,
+     ranking_conectividad,
+     ranking_uso - ranking_conectividad AS diferencia_ranking,
+     abs(ranking_uso - ranking_conectividad) AS diferencia_absoluta
+RETURN pokemon,
+       uso_smogon,
+       puntaje_conectividad,
+       ranking_uso,
+       ranking_conectividad,
+       diferencia_ranking,
+       CASE
+         WHEN diferencia_ranking > 0 THEN 'Más central de lo que sugiere su uso'
+         WHEN diferencia_ranking < 0 THEN 'Más usado que conectado en la red'
+         ELSE 'Uso y centralidad alineados'
+       END AS interpretacion
+ORDER BY diferencia_absoluta DESC, puntaje_conectividad DESC
+LIMIT 20
+''')
+
+display(contraste)
+if not contraste.empty:
+    corr = contraste[['uso_smogon', 'puntaje_conectividad']].corr().iloc[0, 1]
+    muestra = lista_texto(contraste['pokemon'])
+    display(Markdown(
+        f"En esta muestra, la correlación entre uso y conectividad relacional es {corr:.3f}. Casos como {muestra} muestran dónde el ranking relacional se separa más del ranking por uso. "
+        "Una diferencia positiva indica que el Pokémon aparece más central en la red de compañeros de lo que sugeriría su frecuencia bruta; una diferencia negativa indica lo contrario."
+    ))
+""")
+
+md("""Este contraste fortalece la lectura relacional del proyecto. Si el ranking por
+conectividad fuera idéntico al ranking de uso, el grafo estaría aportando poco
+más que una tabla de popularidad. Cuando ambos rankings se separan, aparece una
+lectura más interesante: la consulta captura cómo se conecta una pieza con otras
+piezas y recursos relevantes, no solo cuántas veces aparece en el formato.
+""")
+
 md("""### 4.2 Pokémon que podrían cumplir funciones parecidas
 
 Jaccard es una forma simple de medir cuánto se parecen dos conjuntos. Aquí se
-usa para comparar repertorios de movimientos. Además, se excluyen Pokémon de una
-misma línea evolutiva y se agregan diferencias de estadísticas para evaluar si
-la sustitución parece realista.
+usa para comparar movimientos usados competitivamente (`RUNS_MOVE`), no el
+learnset completo disponible por `CAN_LEARN`. Esto evita que la similitud quede
+dominada por movimientos universales o poco relevantes. Además, se excluyen
+Pokémon de una misma línea evolutiva y se agregan diferencias de estadísticas
+para evaluar si la sustitución parece realista.
 """)
 
-code("""query = '''MATCH (p:Pokemon {is_default:true})-[:CAN_LEARN]->(m:Move)
-WITH p, collect(DISTINCT id(m)) AS moves, count(DISTINCT m) AS movepool_size
-ORDER BY movepool_size DESC
-LIMIT 50
+code("""query = '''MATCH (p:Pokemon {is_default:true})-[:RUNS_MOVE]->(m:Move)
+WITH p, collect(DISTINCT id(m)) AS moves, count(DISTINCT m) AS movimientos_usados
+ORDER BY movimientos_usados DESC
+LIMIT 80
 MATCH (p)-[:IS_SPECIES]->(sp:Species)
 OPTIONAL MATCH (p)-[:HAS_TYPE]->(t:Type)
-WITH p, sp, moves, movepool_size, collect(DISTINCT t.identifier) AS tipos
+WITH p, sp, moves, movimientos_usados, collect(DISTINCT t.identifier) AS tipos
 OPTIONAL MATCH (p)-[hs:HAS_STAT]->(st:Stat)
-WITH p, sp, moves, movepool_size, tipos,
+WITH p, sp, moves, movimientos_usados, tipos,
      sum(coalesce(hs.base_stat, 0)) AS bst,
      collect({stat: st.identifier, valor: coalesce(hs.base_stat, 0)}) AS stats
-WITH collect({p:p, sp:sp, moves:moves, size:movepool_size, tipos:tipos, bst:bst, stats:stats}) AS pokes
+WITH collect({p:p, sp:sp, moves:moves, size:movimientos_usados, tipos:tipos, bst:bst, stats:stats}) AS pokes
 UNWIND pokes AS a
 UNWIND pokes AS b
 WITH a, b, a.p AS pa, b.p AS pb, a.sp AS spa, b.sp AS spb
@@ -300,15 +474,13 @@ WHERE id(pa) < id(pb)
     MATCH (spa)-[:EVOLVES_TO*1..10]-(spb)
   }
 WITH a, b, size([x IN a.moves WHERE x IN b.moves]) AS inter
-WHERE inter >= 10
+WHERE inter >= 2
 WITH a, b, inter,
      toFloat(inter) / (a.size + b.size - inter) AS jaccard
 WITH a, b, inter, jaccard,
      [sa IN a.stats
       WHERE any(sb IN b.stats WHERE sb.stat = sa.stat)
       | abs(sa.valor - head([sb IN b.stats WHERE sb.stat = sa.stat | sb.valor]))] AS diferencias_stats
-WITH a, b, inter, jaccard, diferencias_stats,
-     (a.conexiones_team + b.conexiones_team) AS conexiones_team_total
 RETURN a.p.identifier AS pokemon_a,
        b.p.identifier AS pokemon_b,
        inter AS movimientos_compartidos,
@@ -332,7 +504,7 @@ if not res.empty:
         x='pareja', y='similitud_jaccard', legend=False, figsize=(9, 4)
     )
     ax.set_title('Top 10 pares con funciones potencialmente parecidas')
-    ax.set_xlabel('Similitud por movimientos')
+    ax.set_xlabel('Similitud por movimientos usados')
     ax.set_ylabel('Pareja de Pokémon')
     plt.tight_layout()
     plt.show()
@@ -343,18 +515,19 @@ if not res.empty:
         for r in top.itertuples()
     )
     display(Markdown(
-        f"Entre los pares más altos aparecen {pares}. Estos casos suben en la tabla porque comparten muchos movimientos y, al mismo tiempo, "
+        f"Entre los pares más altos aparecen {pares}. Estos casos suben en la tabla porque comparten movimientos observados en uso competitivo y, al mismo tiempo, "
         "permiten comparar si la diferencia de estadísticas base hace plausible la sustitución. Una pareja con alta similitud pero diferencia BST grande "
         "debe revisarse con más cuidado: puede parecerse en herramientas, pero no necesariamente cumplir el mismo rol en combate."
     ))
 """)
 
-md("""La similitud entre Pokémon se calcula comparando sus repertorios de
-movimientos. En términos simples, dos Pokémon aparecen más arriba cuando
-comparten muchas herramientas posibles. Esto no significa que sean idénticos,
-pero sí que podrían cumplir funciones parecidas, como aportar una cobertura
-similar, usar movimientos de apoyo comparables o adaptarse a planes de equipo
-relacionados.
+md("""La similitud entre Pokémon se calcula comparando movimientos usados en la capa
+competitiva disponible. En términos simples, dos Pokémon aparecen más arriba
+cuando comparten herramientas que no solo existen en su learnset, sino que
+también fueron registradas como parte de su uso competitivo. Esto no significa
+que sean idénticos, pero sí que podrían cumplir funciones parecidas, como aportar
+una cobertura similar, usar movimientos de apoyo comparables o adaptarse a planes
+de equipo relacionados.
 
 La comparación de estadísticas agrega una segunda capa de lectura. El total de
 estadísticas base (`bst_a` y `bst_b`) y las diferencias promedio ayudan a evaluar
@@ -365,10 +538,11 @@ y pre-evoluciones, porque normalmente no son sustitutos estratégicos útiles,
 sino versiones relacionadas de una misma línea.
 
 El resultado debe entenderse como una lista de candidatos para revisar, no como
-una recomendación automática. Todavía faltan factores importantes como EVs,
-naturalezas, objetos, habilidades específicas y rol dentro del equipo. El valor
-del grafo está en reducir el espacio de búsqueda y proponer comparaciones
-razonables que luego requieren juicio competitivo.
+una recomendación automática. Aunque `RUNS_MOVE` es más informativo que
+`CAN_LEARN`, todavía faltan factores importantes como EVs, naturalezas, objetos,
+habilidades específicas y rol dentro del equipo. El valor del grafo está en
+reducir el espacio de búsqueda y proponer comparaciones razonables que luego
+requieren juicio competitivo.
 """)
 
 md("""#### Sustitutos con mayor señal competitiva
@@ -377,26 +551,26 @@ La tabla anterior busca parecido funcional. Esta segunda tabla agrega una
 exigencia adicional: al menos uno de los dos Pokémon debe tener presencia en la
 capa competitiva, ya sea por uso en el formato o por conexiones en la red de
 compañeros `TEAMMATE_OF`. Así se priorizan alternativas que no solo se parecen
-por movimientos y estadísticas, sino que además tienen alguna señal de relevancia
-en el grafo competitivo.
+por movimientos usados y estadísticas, sino que además tienen alguna señal de
+relevancia en el grafo competitivo.
 """)
 
-code("""query = '''MATCH (p:Pokemon {is_default:true})-[:CAN_LEARN]->(m:Move)
-WITH p, collect(DISTINCT id(m)) AS moves, count(DISTINCT m) AS movepool_size
+code("""query = '''MATCH (p:Pokemon {is_default:true})-[:RUNS_MOVE]->(m:Move)
+WITH p, collect(DISTINCT id(m)) AS moves, count(DISTINCT m) AS movimientos_usados
 OPTIONAL MATCH (p)-[tm:TEAMMATE_OF]-(:Pokemon)
-WITH p, moves, movepool_size, count(DISTINCT tm) AS conexiones_team
+WITH p, moves, movimientos_usados, count(DISTINCT tm) AS conexiones_team
 OPTIONAL MATCH (p)-[u:USED_IN]->(:Format {tier:'gen9ou'})
-WITH p, moves, movepool_size, conexiones_team, coalesce(max(u.usage), 0.0) AS uso_smogon
-ORDER BY conexiones_team DESC, uso_smogon DESC, movepool_size DESC
+WITH p, moves, movimientos_usados, conexiones_team, coalesce(max(u.usage), 0.0) AS uso_smogon
+ORDER BY conexiones_team DESC, uso_smogon DESC, movimientos_usados DESC
 LIMIT 60
 MATCH (p)-[:IS_SPECIES]->(sp:Species)
 OPTIONAL MATCH (p)-[:HAS_TYPE]->(t:Type)
-WITH p, sp, moves, movepool_size, conexiones_team, uso_smogon, collect(DISTINCT t.identifier) AS tipos
+WITH p, sp, moves, movimientos_usados, conexiones_team, uso_smogon, collect(DISTINCT t.identifier) AS tipos
 OPTIONAL MATCH (p)-[hs:HAS_STAT]->(st:Stat)
-WITH p, sp, moves, movepool_size, conexiones_team, uso_smogon, tipos,
+WITH p, sp, moves, movimientos_usados, conexiones_team, uso_smogon, tipos,
      sum(coalesce(hs.base_stat, 0)) AS bst,
      collect({stat: st.identifier, valor: coalesce(hs.base_stat, 0)}) AS stats
-WITH collect({p:p, sp:sp, moves:moves, size:movepool_size, tipos:tipos, bst:bst, stats:stats,
+WITH collect({p:p, sp:sp, moves:moves, size:movimientos_usados, tipos:tipos, bst:bst, stats:stats,
               conexiones_team:conexiones_team, uso_smogon:uso_smogon}) AS pokes
 UNWIND pokes AS a
 UNWIND pokes AS b
@@ -407,7 +581,7 @@ WHERE id(pa) < id(pb)
     MATCH (spa)-[:EVOLVES_TO*1..10]-(spb)
   }
 WITH a, b, size([x IN a.moves WHERE x IN b.moves]) AS inter
-WHERE inter >= 10
+WHERE inter >= 2
 WITH a, b, inter,
      toFloat(inter) / (a.size + b.size - inter) AS jaccard
 WITH a, b, inter, jaccard,
@@ -447,7 +621,7 @@ if not res_comp.empty:
         x='pareja', y='similitud_jaccard', legend=False, figsize=(9, 4)
     )
     ax.set_title('Top 10 sustitutos con señal competitiva')
-    ax.set_xlabel('Similitud por movimientos')
+    ax.set_xlabel('Similitud por movimientos usados')
     ax.set_ylabel('Pareja de Pokémon')
     plt.tight_layout()
     plt.show()
@@ -465,7 +639,7 @@ if not res_comp.empty:
 md("""Esta segunda tabla no reemplaza a la primera: la complementa. La primera
 permite descubrir parecidos funcionales amplios, mientras que esta filtra esos
 parecidos hacia casos con mayor evidencia competitiva. Si un par mantiene alta
-similitud por movimientos, diferencias razonables de estadísticas y además uno
+similitud por movimientos usados, diferencias razonables de estadísticas y además uno
 de sus integrantes aparece conectado en la red de equipos, la comparación se
 vuelve más interesante para discutir alternativas reales.
 
@@ -476,7 +650,7 @@ que merecen revisión, no para afirmar automáticamente que un Pokémon reemplaz
 al otro en cualquier equipo.
 """)
 
-md("""### 4.3 Perfiles ofensivos y defensivos de tipos
+md("""### 4.3 Contexto estructural de tipos: perfiles ofensivos y defensivos
 
 Esta sección separa los perfiles de un solo tipo y de dos tipos para que la
 lectura sea más clara. La idea es distinguir cobertura ofensiva, es decir, a qué
@@ -487,7 +661,11 @@ Antes de calcular estas métricas se revisa qué información existe en el grafo
 En este proyecto, `SUPER_EFFECTIVE` representa solo ventajas x2, mientras que
 `EFFECTIVENESS.factor` contiene el cuadro completo de multiplicadores. Por eso
 se pueden calcular daño normal x1, resistencias x0.5 y resistencias dobles
-x0.25 sin inventar relaciones nuevas.
+x0.25 sin inventar relaciones nuevas. Metodológicamente, esta sección no debe
+leerse como un gran descubrimiento competitivo: gran parte de la efectividad de
+tipos proviene de reglas conocidas del juego. El valor del grafo está en cruzar
+esas reglas con Pokémon reales de la base, combinaciones observadas y ejemplos
+concretos que vuelven la lectura más útil para el análisis del metajuego.
 """)
 
 md("""#### Cómo leer las columnas de cobertura
@@ -661,7 +839,8 @@ if not tabla_individual.empty:
         f"Entre los perfiles individuales mejor ubicados aparecen {perfiles}. Estos tipos quedan arriba porque combinan buena cobertura x2, "
         "resistencias x0.5 y pocas debilidades x2. El balance de tipo no mide daño real ni sets concretos; funciona como una lectura resumida "
         "del intercambio entre presión ofensiva y seguridad defensiva. En una fila de esta tabla, `cantidad_pokemon` indica cuántos Pokémon tienen ese tipo, "
-        "mientras que las columnas de cobertura resumen interacciones contra tipos: objetivos ofensivos, amenazas defensivas, resistencias y daño neutral."
+        "mientras que las columnas de cobertura resumen interacciones contra tipos: objetivos ofensivos, amenazas defensivas, resistencias y daño neutral. "
+        "La contribución del grafo está en mostrar cuántos Pokémon concretos tienen cada perfil, no en redescubrir reglas de efectividad ya conocidas."
     ))
 """)
 
@@ -741,7 +920,7 @@ if not tabla_doble.empty:
         "resistencias útiles y pocas amenazas x4. Una debilidad x4 pesa más que una debilidad x2 porque marca un punto de entrada especialmente peligroso "
         "para el rival; por eso el balance ajustado la penaliza explícitamente. En una fila como `fire / ground`, `cantidad_pokemon` cuenta cuántos Pokémon "
         "tienen esa combinación, mientras que las demás columnas resumen interacciones de tipo: qué puede golpear, qué lo amenaza y si existen riesgos críticos x4 "
-        "o resistencias fuertes x0.25."
+        "o resistencias fuertes x0.25. Esta lectura sirve como contexto estructural para discutir equipos, pero no reemplaza el análisis de movimientos, habilidades, objetos ni roles."
     ))
 """)
 
@@ -790,7 +969,7 @@ if not tabla_x4.empty:
     tipos_x4 = lista_texto(tabla_x4['tipo_ofensivo'])
     display(Markdown(
         f"Los tipos ofensivos que más aparecen en esta vista son {tipos_x4}. Su valor no viene solo de golpear x2 a tipos individuales, "
-        "sino de amenazar combinaciones dobles reales con daño x4. Esto vuelve esas coberturas especialmente relevantes al preparar respuestas contra perfiles vulnerables."
+        "sino de amenazar combinaciones dobles reales con daño x4. Esto vuelve esas coberturas relevantes como contexto, aunque la decisión competitiva final depende del movimiento concreto, el usuario del ataque y el estado de la partida."
     ))
 """)
 
@@ -883,7 +1062,7 @@ if not tabla_general.empty:
     display(Markdown(
         f"En la comparación general aparecen arriba perfiles como {mejores}. Los perfiles dobles pueden ganar por sumar resistencias y cobertura, "
         "pero también pueden caer si introducen amenazas x4. Los perfiles individuales suelen ser más simples de leer: no generan vulnerabilidades dobles, "
-        "aunque tampoco acceden a las mismas sinergias defensivas u ofensivas de una combinación."
+        "aunque tampoco acceden a las mismas sinergias defensivas u ofensivas de una combinación. La tabla resume el contexto de tipos disponible en el grafo; no pretende ordenar Pokémon completos ni dictar qué perfil es mejor en todos los equipos."
     ))
 """)
 
@@ -891,10 +1070,34 @@ md("""### 4.4 Grupos o cores que aparecen juntos en equipos
 
 Louvain agrupa Pokémon que aparecen conectados de forma densa en la red de
 compañeros. En lenguaje simple, Louvain detecta grupos de Pokémon que tienden a
-conectarse entre sí.
+conectarse entre sí. En esta sección, esos grupos se presentan como hipótesis de
+lectura y no como cores confirmados. La red `TEAMMATE_OF` proviene de la capa
+competitiva cargada y puede incluir señales más amplias que el alcance estricto
+de Gen 9 OU; por eso las etiquetas se mantienen prudentes.
 """)
 
-code("""res = df('''
+code("""run("CALL gds.graph.drop('teammates', false)")
+run('''
+CALL gds.graph.project(
+  'teammates',
+  'Pokemon',
+  {
+    TEAMMATE_OF: {
+      orientation: 'UNDIRECTED'
+    }
+  }
+)
+''')
+
+calidad_louvain = df('''
+CALL gds.louvain.stats('teammates') YIELD modularity, communityCount
+RETURN round(modularity * 1000) / 1000.0 AS modularidad,
+       communityCount AS comunidades_detectadas
+LIMIT 1
+''')
+display(calidad_louvain)
+
+res = df('''
 CALL gds.louvain.stream('teammates') YIELD nodeId, communityId
 WITH communityId, gds.util.asNode(nodeId) AS p
 OPTIONAL MATCH (p)-[u:USED_IN]->(:Format {tier:'gen9ou'})
@@ -904,6 +1107,8 @@ OPTIONAL MATCH (p)-[:USES_ABILITY]->(ab:Ability)
 OPTIONAL MATCH (p)-[:HOLDS_ITEM]->(it:Item)
 RETURN communityId AS comunidad,
        count(DISTINCT p) AS tamaño,
+       count(DISTINCT CASE WHEN u IS NULL THEN null ELSE p END) AS pokemon_con_uso_ou,
+       round((toFloat(count(DISTINCT CASE WHEN u IS NULL THEN null ELSE p END)) / count(DISTINCT p)) * 100) / 100.0 AS proporcion_con_uso_ou,
        round(avg(coalesce(u.usage, 0.0)) * 100) / 100.0 AS uso_promedio,
        collect(DISTINCT p.identifier)[..10] AS muestra_pokemon,
        collect(DISTINCT t.identifier)[..6] AS tipos_frecuentes_en_muestra,
@@ -920,45 +1125,53 @@ def nombrar_core(fila):
     habilidades = set(fila.get('habilidades_frecuentes_en_muestra', []) or [])
     objetos = set(fila.get('objetos_frecuentes_en_muestra', []) or [])
 
-    lluvia = {'rain-dance', 'hydro-pump', 'surf', 'waterfall', 'aqua-jet'}
-    sol = {'sunny-day', 'solar-beam', 'synthesis', 'flamethrower', 'fire-blast'}
     desgaste = {'protect', 'leech-seed', 'toxic', 'will-o-wisp', 'recover', 'roost', 'synthesis', 'wish', 'soft-boiled'}
     setup = {'swords-dance', 'nasty-plot', 'dragon-dance', 'calm-mind', 'bulk-up', 'quiver-dance', 'shell-smash'}
     control = {'rapid-spin', 'defog', 'stealth-rock', 'spikes', 'toxic-spikes', 'knock-off', 'taunt', 'encore'}
     velocidad = {'u-turn', 'volt-switch', 'agility', 'trailblaze', 'rapid-spin', 'dragon-dance'}
 
-    if 'trick-room' in movimientos:
-        nombre = 'Core Trick Room'
-        base = 'presencia de trick-room'
-    elif movimientos & lluvia and 'water' in tipos:
-        nombre = 'Core de lluvia / agua'
-        base = 'tipos frecuentes: water; movimientos de agua o lluvia'
-    elif movimientos & sol and ({'fire', 'grass'} & tipos):
-        nombre = 'Core de sol / fuego-planta'
-        base = 'tipos frecuentes: fire/grass; movimientos asociados a sol o fuego-planta'
-    elif movimientos & desgaste:
+    criterios = []
+    if movimientos & desgaste:
         nombre = 'Core defensivo de desgaste'
-        base = 'movimientos de recuperación/desgaste'
+        criterios.append('movimientos de recuperación o desgaste')
     elif movimientos & setup:
-        nombre = 'Core de setup ofensivo'
-        base = 'movimientos de aumento de estadísticas'
+        nombre = 'Core con movimientos de preparación ofensiva'
+        criterios.append('movimientos de aumento de estadísticas')
     elif movimientos & control:
-        nombre = 'Core de soporte y control'
-        base = 'movimientos de control, peligros de entrada o limpieza'
+        nombre = 'Core con soporte y utilidad'
+        criterios.append('movimientos de control, peligros de entrada o limpieza')
     elif movimientos & velocidad:
-        nombre = 'Core de velocidad / presión ofensiva'
-        base = 'movimientos de pivoteo, velocidad o presión'
+        nombre = 'Core mixto con presión ofensiva'
+        criterios.append('movimientos de pivoteo, velocidad o presión')
     elif 'water' in tipos:
-        nombre = 'Core basado en tipos agua'
-        base = 'muestra con varios Pokémon de tipo water'
+        nombre = 'Core mixto con presencia de tipo agua'
+        criterios.append('presencia de tipo water en la muestra')
     elif {'fire', 'grass'} & tipos:
-        nombre = 'Core mixto fuego-planta'
-        base = 'presencia de tipos fire/grass en la muestra'
+        nombre = 'Core mixto con presencia fuego/planta'
+        criterios.append('presencia de tipos fire o grass en la muestra')
     else:
-        nombre = 'Core mixto con soporte'
-        base = 'mezcla de Pokémon y herramientas sin etiqueta dominante clara'
+        nombre = 'Core mixto no etiquetable'
+        criterios.append('mezcla de Pokémon y herramientas sin patrón dominante claro')
 
-    partes = [base]
+    evidencia = 0
+    if movimientos & (desgaste | setup | control | velocidad):
+        evidencia += 1
+    if tipos:
+        evidencia += 1
+    if habilidades:
+        evidencia += 1
+    if objetos:
+        evidencia += 1
+    if nombre == 'Core mixto no etiquetable':
+        confianza = 'baja'
+    elif evidencia >= 3 and fila.get('proporcion_con_uso_ou', 0) >= 0.5:
+        confianza = 'alta'
+    elif evidencia >= 2:
+        confianza = 'media'
+    else:
+        confianza = 'baja'
+
+    partes = criterios
     if movimientos:
         partes.append('movimientos frecuentes: ' + ', '.join(list(movimientos)[:4]))
     if tipos:
@@ -967,7 +1180,8 @@ def nombrar_core(fila):
         partes.append('habilidades observadas: ' + ', '.join(list(habilidades)[:3]))
     if objetos:
         partes.append('objetos observados: ' + ', '.join(list(objetos)[:3]))
-    return pd.Series({'nombre_core': nombre, 'criterio_nombre': '; '.join(partes)})
+    partes.append(f"proporción con uso OU observado: {fila.get('proporcion_con_uso_ou', 0):.2f}")
+    return pd.Series({'nombre_core': nombre, 'confianza_etiqueta': confianza, 'criterio_nombre': '; '.join(partes)})
 
 if not res.empty:
     res = pd.concat([res, res.apply(nombrar_core, axis=1)], axis=1)
@@ -977,7 +1191,8 @@ if not res.empty:
     )
 
 columnas_core = [
-    'comunidad', 'nombre_core', 'criterio_nombre', 'tamaño', 'uso_promedio',
+    'comunidad', 'nombre_core', 'confianza_etiqueta', 'criterio_nombre',
+    'tamaño', 'pokemon_con_uso_ou', 'proporcion_con_uso_ou', 'uso_promedio',
     'muestra_pokemon', 'tipos_frecuentes_en_muestra',
     'movimientos_frecuentes_en_muestra',
     'habilidades_frecuentes_en_muestra', 'objetos_frecuentes_en_muestra'
@@ -1005,7 +1220,7 @@ if not res.empty:
     fila = res.iloc[0]
     muestra = lista_texto(fila['muestra_pokemon'], max_items=4)
     display(Markdown(
-        f"La comunidad {fila['comunidad']} se etiqueta como **{fila['nombre_core']}** a partir de una muestra que incluye {muestra}. "
+        f"La comunidad {fila['comunidad']} se etiqueta como **{fila['nombre_core']}** con confianza {fila['confianza_etiqueta']} a partir de una muestra que incluye {muestra}. "
         f"El criterio usado fue: {fila['criterio_nombre']}. Esta etiqueta resume evidencia visible en la tabla, pero no debe leerse como una categoría oficial."
     ))
 else:
@@ -1023,17 +1238,22 @@ ser solo un número interno y pasa a ser una hipótesis más fácil de leer.
 Estas etiquetas no deben entenderse como una clasificación oficial del
 metajuego. Funcionan como una ayuda de interpretación: permiten pasar de una
 comunidad anónima a una posible lectura sobre su función estratégica, como
-soporte, desgaste, presión ofensiva, control o afinidad por ciertos tipos. Si la
-evidencia no es suficiente para una etiqueta fuerte, el nombre se mantiene
-prudente, por ejemplo como core mixto o core general con soporte.
+soporte, desgaste, presión ofensiva, control o afinidad por ciertos tipos. La
+columna `confianza_etiqueta` indica cuánta evidencia visible respalda el nombre:
+cuando la muestra no sostiene una lectura clara, la etiqueta se deja como mixta
+o no etiquetable.
 
 El gráfico de tamaño muestra cuántos Pokémon agrupa cada comunidad, mientras que
 el gráfico de uso promedio permite comparar esa cantidad con una señal de
 presencia competitiva. Una comunidad grande no siempre es la más influyente, y
 una comunidad de alto uso promedio puede estar formada por menos piezas pero más
-presentes en el formato. Para confirmar que un grupo corresponde a un core real
-habría que revisar conjuntos de movimientos, objetos, EVs, roles concretos y
-contexto competitivo.
+presentes en el formato. La modularidad reportada entrega una señal de qué tan
+separadas están las comunidades dentro de la red, pero no reemplaza una validación
+competitiva externa. Además, si una comunidad incluye muchos Pokémon sin uso OU
+observado, debe leerse como una agrupación de la red cargada y no como un core
+exclusivo de Gen 9 OU. Para confirmar que un grupo corresponde a un core real
+habría que revisar conjuntos de movimientos, objetos, EVs, roles concretos,
+replays o documentación competitiva adicional.
 """)
 
 md("""### 4.5 Cadenas que explican por qué un Pokémon encaja
@@ -1208,121 +1428,162 @@ sección muestra una variedad mayor de posibles funciones estratégicas y evita
 que el análisis quede dominado por una sola pieza muy usada.
 """)
 
-md("""### 4.6 Pregunta 6: ¿Puede el grafo anticipar qué Pokémon podrían funcionar juntos en un equipo competitivo?
+md("""### 4.6 Pregunta 6: ¿Puede el grafo anticipar compatibilidad competitiva entre Pokémon usando solo información no derivada del uso competitivo?
 
-Esta pregunta evalúa el valor predictivo del grafo. No se busca construir
-automáticamente un equipo completo de seis Pokémon, sino revisar si la
-estructura integrada del grafo contiene señales que ayuden a anticipar
-compatibilidad competitiva entre Pokémon. En este contexto, predecir
-compatibilidad significa estimar si dos piezas podrían tener sentido dentro de
-una misma estrategia, a partir de información como tipos, estadísticas,
-movimientos, habilidades y relaciones estructurales.
+Esta pregunta evalúa el valor predictivo del grafo bajo una restricción
+metodológica más exigente. No se busca construir automáticamente un equipo
+perfecto de seis Pokémon, sino analizar si atributos y relaciones no derivadas
+directamente del uso observado podrían ayudar a estimar compatibilidad
+competitiva entre Pokémon. En este contexto, predecir compatibilidad significa
+distinguir pares que podrían tener sentido dentro de una estrategia de pares que
+no muestran una señal funcional clara.
 
-La aclaración metodológica es importante: si se quiere predecir una relación de
-equipo, como `TEAMMATE_OF`, no se debería usar esa misma relación como entrada
-directa del modelo. Eso produciría fuga de información, porque el modelo estaría
-mirando una versión de la respuesta que intenta predecir. Por eso, los
-resultados deben distinguir entre señales generales del grafo y señales
-competitivas que pueden estar demasiado cerca de la variable objetivo.
+La advertencia central es la fuga de información. Si el objetivo fuera predecir
+una relación de equipo como `TEAMMATE_OF`, no se deberían usar como variables de
+entrada esa misma relación, su grado, PageRank o comunidades calculadas sobre
+ella. Tampoco deberían usarse directamente `USED_IN`, `uso_smogon`, co-uso ni
+otras señales derivadas del uso competitivo observado. Esas relaciones pueden
+servir como etiqueta o como evaluación, pero no como explicación independiente
+del modelo.
 """)
 
-md("""#### 6.1 Qué información se usa para predecir
+md("""#### 6.1 Variables usadas y excluidas para evitar fuga de información
 
-La siguiente tabla resume los bloques de información que pueden alimentar una
-predicción de compatibilidad. La idea es separar las señales relativamente
-generales, como tipos o estadísticas, de las señales competitivas más delicadas,
-como relaciones derivadas de Smogon. Estas últimas pueden ser muy útiles, pero
-también requieren una lectura más cuidadosa cuando se usan para predecir vínculos
-entre Pokémon.
+La siguiente tabla separa las variables que sí se usan en el modelo principal de
+las que se excluyen para evitar fuga de información. `TEAMMATE_OF` se usa como
+etiqueta a predecir, no como entrada del modelo. Del mismo modo, las señales de
+uso competitivo se dejan fuera porque están demasiado cerca del fenómeno que se
+quiere anticipar.
 """)
 
-code("""bloques_prediccion = pd.DataFrame([
+code("""variables_fuga = pd.DataFrame([
     {
-        "bloque_de_informacion": "Atributos básicos",
-        "ejemplos": "stats base, tipos",
-        "por_que_podria_ayudar": "Permite comparar perfiles generales de poder, velocidad, resistencia y cobertura de tipo.",
-        "riesgo_o_limitacion": "Es una señal simple; no captura roles, sinergias ni decisiones de equipo."
+        "grupo": "Stats base",
+        "ejemplos": "BST, HP, Attack, Defense, Sp. Atk, Sp. Def, Speed",
+        "se_usa_en_modelo": "Sí",
+        "motivo": "Son atributos propios del Pokémon y no derivan del uso competitivo observado."
     },
     {
-        "bloque_de_informacion": "Movepool y habilidades",
-        "ejemplos": "movimientos aprendidos, habilidades disponibles",
-        "por_que_podria_ayudar": "Ayuda a detectar funciones parecidas o complementarias, como cobertura ofensiva, soporte o presión defensiva.",
-        "riesgo_o_limitacion": "No todos los movimientos aprendidos se usan realmente en competitivo y falta el contexto de set, EVs u objeto."
+        "grupo": "Tipos",
+        "ejemplos": "tipos de cada Pokémon, tipos compartidos, perfil de tipo",
+        "se_usa_en_modelo": "Sí",
+        "motivo": "Es información estructural del Pokémon y permite comparar compatibilidad básica sin mirar equipos observados."
     },
     {
-        "bloque_de_informacion": "Estructura del grafo",
-        "ejemplos": "similitud funcional, caminos, comunidades, tipos compartidos",
-        "por_que_podria_ayudar": "Conecta información dispersa y puede revelar patrones que no aparecen al mirar tablas aisladas.",
-        "riesgo_o_limitacion": "La utilidad depende de qué relaciones estén cargadas y de cómo se construyeron."
+        "grupo": "Movepool disponible",
+        "ejemplos": "`CAN_LEARN`, movimientos compartidos, Jaccard de movimientos aprendibles",
+        "se_usa_en_modelo": "Sí",
+        "motivo": "Aproxima similitud funcional sin usar movimientos observados en equipos competitivos."
     },
     {
-        "bloque_de_informacion": "Señal competitiva",
-        "ejemplos": "uso Smogon, relaciones competitivas, cercanía a compañeros frecuentes",
-        "por_que_podria_ayudar": "Puede capturar experiencia observada del metajuego y asociaciones reales entre piezas.",
-        "riesgo_o_limitacion": "Debe usarse con cautela: si está muy cerca de `TEAMMATE_OF` o de la etiqueta a predecir, puede haber fuga de información."
+        "grupo": "Habilidades",
+        "ejemplos": "habilidades compartidas, Jaccard de habilidades",
+        "se_usa_en_modelo": "Sí",
+        "motivo": "Son atributos propios del Pokémon y pueden reflejar funciones parecidas o complementarias."
+    },
+    {
+        "grupo": "Uso competitivo",
+        "ejemplos": "`USED_IN`, `uso_smogon`",
+        "se_usa_en_modelo": "No",
+        "motivo": "Deriva del mismo fenómeno competitivo que se quiere evaluar y puede inflar artificialmente el desempeño."
+    },
+    {
+        "grupo": "Relaciones de equipo",
+        "ejemplos": "`TEAMMATE_OF`, grado, PageRank o comunidades sobre `TEAMMATE_OF`",
+        "se_usa_en_modelo": "No",
+        "motivo": "`TEAMMATE_OF` es la variable objetivo; usarla o usar derivados suyos sería fuga de información."
+    },
+    {
+        "grupo": "Movimientos usados competitivamente",
+        "ejemplos": "`RUNS_MOVE` cuando proviene de Smogon",
+        "se_usa_en_modelo": "No",
+        "motivo": "Puede reflejar directamente decisiones observadas en el metajuego que se intenta predecir."
     },
 ])
 
-display(bloques_prediccion)
+display(variables_fuga)
 """)
 
-md("""#### 6.2 Resultados del modelo
+md("""#### 6.2 Experimento predictivo sin fuga de información
 
-Los resultados se muestran como un resumen de métricas ya calculadas por el
-archivo externo de ML. El cuaderno no ejecuta `analysis/graph_ml_integrated.py`;
-solo presenta sus métricas principales para mantener controlado el tiempo de
-ejecución del reporte.
+El experimento principal usa `TEAMMATE_OF` como etiqueta: un par positivo
+corresponde a dos Pokémon conectados por esa relación, mientras que un par
+negativo corresponde a dos Pokémon del mismo universo de candidatos que no están
+conectados por `TEAMMATE_OF`. Los negativos se muestrean dentro de los Pokémon
+que aparecen en alguna relación de compañeros, en proporción 1:1 con los
+positivos. Esto evita una comparación demasiado fácil contra Pokémon
+completamente ajenos al universo competitivo observado.
 
-En la tabla, el modelo con `BST base` funciona como punto de comparación porque
-usa información muy básica. El bloque de `Repertorio de movimientos +
-habilidades` agrega señales funcionales sobre lo que un Pokémon puede hacer. La
-versión de `Grafo competitivo` incorpora estructura relacional, lo que puede
-mejorar mucho el desempeño, aunque también exige cautela si esas relaciones se
-parecen demasiado al objetivo. Por último, la predicción de enlaces
-`COMPATIBLE` intenta estimar si dos nodos deberían estar conectados dentro del
-grafo.
+El modelo se entrena con un split reproducible de entrenamiento y prueba
+(`random_state=42`) y usa un clasificador simple de bosque aleatorio. El cuaderno
+no ejecuta `analysis/graph_ml_integrated.py`; solo muestra el archivo de métricas
+generado externamente por ese script.
 """)
 
-code("""metricas_ml = pd.DataFrame([
-    {"experimento": "Viabilidad OU", "variables": "BST base", "AUC": 0.827, "AP": 0.498},
-    {"experimento": "Viabilidad OU", "variables": "Repertorio de movimientos + habilidades", "AUC": 0.857, "AP": 0.584},
-    {"experimento": "Viabilidad OU", "variables": "Grafo competitivo", "AUC": 0.986, "AP": 0.970},
-    {"experimento": "Predicción de enlaces COMPATIBLE", "variables": "Experimento externo reproducible", "AUC": 0.670, "AP": 0.694},
-])
+code("""import json
+import os
 
-lecturas_metricas = {
-    "BST base": "Modelo base con estadísticas generales; sirve como comparación mínima.",
-    "Repertorio de movimientos + habilidades": "Agrega señales funcionales sobre recursos disponibles.",
-    "Grafo competitivo": "Agrega estructura relacional; puede contener señal fuerte, pero cercana al objetivo.",
-    "Experimento externo reproducible": "Evalúa predicción de enlaces como tarea separada y reproducible."
-}
+rutas_resultados_ml = [
+    os.path.join('analysis', 'ml_teammate_safe_results.json'),
+    'ml_teammate_safe_results.json',
+]
+resultados_ml_seguro = {}
+for ruta in rutas_resultados_ml:
+    if os.path.exists(ruta):
+        with open(ruta, 'r', encoding='utf-8') as f:
+            resultados_ml_seguro = json.load(f)
+        break
 
-metricas_presentacion = metricas_ml.copy()
-metricas_presentacion["lectura"] = metricas_presentacion["variables"].map(lecturas_metricas)
-display(metricas_presentacion[["experimento", "variables", "lectura", "AUC", "AP"]])
+if resultados_ml_seguro.get('resultados'):
+    metricas_seguras = pd.DataFrame(resultados_ml_seguro['resultados'])
+    columnas_metricas = [
+        'bloque', 'modelo', 'n_variables', 'auc', 'ap',
+        'train_positivos', 'train_negativos', 'test_positivos', 'test_negativos'
+    ]
+    display(metricas_seguras[columnas_metricas])
 
-ax = metricas_ml.set_index('variables')[['AUC', 'AP']].plot.bar(figsize=(9, 4))
-ax.set_title('Resumen de métricas de modelos')
-ax.set_xlabel('Variables usadas')
-ax.set_ylabel('Valor de la métrica')
-plt.xticks(rotation=25, ha='right')
-plt.tight_layout()
-plt.show()
+    ax = metricas_seguras.set_index('bloque')[['auc', 'ap']].plot.bar(figsize=(9, 4))
+    ax.set_title('Métricas del experimento sin fuga')
+    ax.set_xlabel('Bloque de variables')
+    ax.set_ylabel('Valor de la métrica')
+    plt.xticks(rotation=20, ha='right')
+    plt.tight_layout()
+    plt.show()
 
-base = metricas_ml.iloc[0]
-grafo = metricas_ml[metricas_ml['variables'] == 'Grafo competitivo'].iloc[0]
-display(Markdown(
-    f"En las métricas de viabilidad OU, el punto de partida con {base['variables']} alcanza AUC={base['AUC']:.3f} y AP={base['AP']:.3f}, "
-    f"mientras que la versión con {grafo['variables']} llega a AUC={grafo['AUC']:.3f} y AP={grafo['AP']:.3f}. "
-    "La mejora sugiere que las relaciones del grafo agregan información útil frente a mirar solo atributos aislados. "
-    "Al mismo tiempo, un valor tan alto debe leerse con cautela: si las señales competitivas usadas por el modelo están muy cerca de la etiqueta, "
-    "el desempeño puede reflejar una señal parcialmente circular y no una predicción completamente independiente."
-))
+    mejor = metricas_seguras.sort_values(['auc', 'ap'], ascending=False).iloc[0]
+    display(Markdown(
+        "El experimento usa " + str(resultados_ml_seguro.get('pares_positivos')) + " pares positivos y "
+        + str(resultados_ml_seguro.get('pares_negativos')) + " pares negativos. "
+        + "El mejor bloque fue `" + str(mejor['bloque']) + "`, con AUC="
+        + format(float(mejor['auc']), '.3f') + " y AP=" + format(float(mejor['ap']), '.3f') + ". "
+        + "Estas métricas se calculan sin usar `TEAMMATE_OF`, uso Smogon ni señales competitivas derivadas como variables de entrada."
+    ))
+else:
+    display(Markdown(
+        "No se encontró `analysis/ml_teammate_safe_results.json`. "
+        "Ejecuta `analysis/graph_ml_integrated.py` fuera del cuaderno para generar las métricas del experimento sin fuga."
+    ))
 
-print("Los experimentos completos de ML se reproducen fuera de este cuaderno con analysis/graph_ml_integrated.py.")
+print("Las métricas de ML se calculan fuera de este cuaderno con analysis/graph_ml_integrated.py.")
 """)
 
-md("""#### 6.3 Interpretación y cuidado metodológico
+md("""#### 6.3 Control con fuga de información: por qué no se usa como evidencia principal
+
+El reporte conserva como referencia metodológica el resultado antiguo de
+viabilidad OU con señales de grafo competitivo. Ese resultado era alto
+(`AUC=0.986`, `AP=0.970`), pero usaba información demasiado cercana al objetivo:
+relaciones de compañeros, uso competitivo, movimientos usados en Smogon y otras
+señales derivadas del mismo fenómeno que se buscaba predecir. Por eso puede
+inflar las métricas y no debe interpretarse como predicción independiente.
+
+La comparación es útil precisamente porque muestra por qué el control de fuga es
+necesario. Un resultado más bajo en el experimento sin fuga no es un fracaso
+metodológico: es esperable cuando el modelo deja de mirar señales cercanas a la
+respuesta. Si aun así el desempeño queda por encima del azar, la conclusión es
+más confiable aunque sea más modesta.
+""")
+
+md("""#### 6.4 Interpretación de AUC, AP y resultados
 
 AUC mide qué tan bien el modelo separa casos compatibles de casos no
 compatibles. Un valor cercano a 0.5 sería parecido a adivinar al azar, mientras
@@ -1331,20 +1592,21 @@ bien el modelo prioriza los casos positivos, lo que resulta útil cuando hay
 muchas combinaciones posibles y solo algunas representan vínculos competitivos
 relevantes.
 
-Si el modelo con información de grafo mejora al modelo base, eso sugiere que la
-estructura relacional contiene señales que no aparecen con la misma claridad en
-una tabla plana. En términos estratégicos, el grafo puede ayudar a detectar
-pares o relaciones que parecen tener sentido competitivo porque comparten
-recursos, se conectan por caminos similares, pertenecen a comunidades cercanas o
-se relacionan con patrones observados del metajuego.
+En este diseño, las métricas deben leerse de manera más exigente que en el
+experimento anterior. El modelo ya no usa `TEAMMATE_OF`, uso Smogon ni variables
+derivadas de equipos observados como entrada; solo usa atributos propios del
+Pokémon y relaciones base como tipos, estadísticas, habilidades y `CAN_LEARN`.
+Por eso, si las métricas bajan frente al control con fuga, esa caída es esperable
+y metodológicamente saludable: el modelo dejó de usar pistas demasiado parecidas
+a la respuesta.
 
-Sin embargo, el resultado no debe leerse como prueba de que el grafo predice
-perfectamente equipos futuros. Cuando se incorporan relaciones competitivas muy
-cercanas a los datos de equipos, el modelo puede estar usando señales demasiado
-parecidas a la respuesta que se quiere estimar. Por eso, estas métricas son una
-evidencia de que el grafo captura estructura competitiva útil, pero no una
-garantía de predicción independiente ni una receta automática para construir
-equipos completos.
+Si el desempeño del bloque completo sin fuga supera al baseline de stats, la
+lectura razonable es que el grafo base contiene una señal parcial de
+compatibilidad. No significa que pueda construir equipos completos ni reemplazar
+criterio competitivo, pero sí que la combinación de atributos, tipos, habilidades
+y movepool disponible aporta más información que mirar estadísticas aisladas. Un
+resultado moderado, cuando está bien controlado, es más defendible que una métrica
+muy alta obtenida con señales circulares.
 """)
 
 md("""## 5. Machine Learning integrado
@@ -1355,30 +1617,48 @@ reproducir el experimento completo.
 
 El resumen compara:
 
-- viabilidad OU con variables base de estadísticas,
-- viabilidad OU agregando repertorio de movimientos y habilidades,
-- viabilidad OU agregando señales del grafo competitivo,
-- predicción de enlaces `COMPATIBLE` como experimento externo reproducible.
+- predicción de `TEAMMATE_OF` con baseline de stats,
+- predicción de `TEAMMATE_OF` agregando tipos, habilidades y movepool disponible por `CAN_LEARN`,
+- un control metodológico con fuga probable, conservado solo para explicar por qué no debe usarse como evidencia principal.
 
 No se ejecuta el archivo completo dentro del cuaderno para evitar aumentar el
 tiempo de `nbconvert` y para mantener separado el reporte narrativo del
-experimento reproducible.
+experimento reproducible. La métrica alta del bloque antiguo con grafo
+competitivo no se usa como conclusión predictiva principal, porque incluye
+señales derivadas del uso competitivo observado.
 """)
 
 md("""## 6. Conclusiones
 
 El grafo integrado funciona como un motor de razonamiento competitivo porque
 conecta recursos, roles y relaciones de equipo. La centralidad muestra qué
-Pokémon organizan la red; la similitud por movimientos sugiere sustitutos; el
-cuadro de tipos permite razonar sobre perfiles ofensivos y defensivos; las
-comunidades de `TEAMMATE_OF` revelan cores; y las rutas heterogéneas explican
-por qué una pieza encaja en una estrategia.
+Pokémon organizan la red; la similitud por movimientos usados competitivamente
+sugiere sustitutos para revisión; el cuadro de tipos entrega contexto estructural
+al cruzar reglas conocidas con Pokémon reales; las comunidades de `TEAMMATE_OF`
+formulan hipótesis de cores; y las rutas heterogéneas explican por qué una pieza
+encaja en una estrategia.
 
 El aporte principal frente a una lectura tabular es relacional. Una tabla puede
 ordenar por uso, ataque o velocidad; el grafo permite ver cómo una decisión se
 conecta con compañeros, cobertura, respuestas defensivas y patrones de co-ocurrencia. Por eso
 los resultados deben leerse como apoyo a decisiones estratégicas, no como una
 lista automática de mejores Pokémon.
+
+El valor del proyecto no depende solo de ML. La mayor parte del reporte se apoya
+en consultas complejas: agregaciones de conectividad, similitud funcional,
+perfiles de tipo y recorridos explicativos. El algoritmo de comunidades se usa
+solo para la pregunta 4 como análisis estructural exploratorio, no como
+predicción. Recién en la pregunta 6 aparece un experimento supervisado, separado
+del resto y diseñado para controlar fuga de información.
+
+La revisión metodológica también muestra un límite importante: las señales de uso
+competitivo son valiosas para describir el metajuego, pero pueden producir fuga
+si se usan para predecir la misma viabilidad o relación de equipo de la que
+provienen. Por eso, el resultado antiguo con grafo competitivo se conserva solo
+como control de fuga probable. La versión revisada incorpora un experimento para
+predecir `TEAMMATE_OF` con variables no derivadas de `TEAMMATE_OF`, `USED_IN` ni
+uso Smogon, lo que entrega una evaluación más sobria pero metodológicamente más
+defendible.
 
 Como alcance temporal, las conclusiones corresponden a Gen 9 OU / Scarlet &
 Violet / Smogon. Pokémon Champions puede cambiar el metajuego, por lo que una

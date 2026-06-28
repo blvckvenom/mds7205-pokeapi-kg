@@ -1,0 +1,119 @@
+{
+  "pregunta": "¿Puede el grafo anticipar compatibilidad competitiva entre Pokémon usando solo información no derivada del uso competitivo?",
+  "objetivo": "Predecir si un par de Pokémon tiene relación TEAMMATE_OF.",
+  "fecha_generacion": "2026-06-28T16:19:20Z",
+  "random_state": 42,
+  "muestreo_negativos": "Pares no conectados por TEAMMATE_OF, muestreados dentro del universo de Pokémon que sí aparecen en alguna relación TEAMMATE_OF, balanceados 1:1 con los positivos.",
+  "pares_positivos": 1788,
+  "pares_negativos": 1788,
+  "candidatos": 220,
+  "modelo_principal": "RandomForestClassifier con random_state=42, n_estimators=300 y min_samples_leaf=5.",
+  "variables_excluidas": [
+    "TEAMMATE_OF como variable de entrada",
+    "grado, PageRank o comunidades sobre TEAMMATE_OF",
+    "USED_IN",
+    "uso_smogon",
+    "co_uso",
+    "RUNS_MOVE cuando proviene de Smogon",
+    "movimientos usados competitivamente"
+  ],
+  "resultados": [
+    {
+      "bloque": "Baseline de stats",
+      "modelo": "RandomForestClassifier",
+      "variables": [
+        "bst_min",
+        "bst_max",
+        "diferencia_bst",
+        "diferencia_promedio_stats"
+      ],
+      "n_variables": 4,
+      "auc": 0.612,
+      "ap": 0.612,
+      "train_positivos": 1341,
+      "train_negativos": 1341,
+      "test_positivos": 447,
+      "test_negativos": 447
+    },
+    {
+      "bloque": "Stats + tipos",
+      "modelo": "RandomForestClassifier",
+      "variables": [
+        "bst_min",
+        "bst_max",
+        "diferencia_bst",
+        "diferencia_promedio_stats",
+        "tipos_compartidos",
+        "tipos_union",
+        "mismo_perfil_tipo"
+      ],
+      "n_variables": 7,
+      "auc": 0.625,
+      "ap": 0.632,
+      "train_positivos": 1341,
+      "train_negativos": 1341,
+      "test_positivos": 447,
+      "test_negativos": 447
+    },
+    {
+      "bloque": "Stats + movepool disponible",
+      "modelo": "RandomForestClassifier",
+      "variables": [
+        "bst_min",
+        "bst_max",
+        "diferencia_bst",
+        "diferencia_promedio_stats",
+        "movimientos_compartidos_can_learn",
+        "similitud_movepool_jaccard",
+        "movimientos_min",
+        "movimientos_max"
+      ],
+      "n_variables": 8,
+      "auc": 0.677,
+      "ap": 0.668,
+      "train_positivos": 1341,
+      "train_negativos": 1341,
+      "test_positivos": 447,
+      "test_negativos": 447
+    },
+    {
+      "bloque": "Grafo base sin fuga",
+      "modelo": "RandomForestClassifier",
+      "variables": [
+        "bst_max",
+        "bst_min",
+        "diferencia_attack",
+        "diferencia_bst",
+        "diferencia_defense",
+        "diferencia_hp",
+        "diferencia_promedio_stats",
+        "diferencia_special-attack",
+        "diferencia_special-defense",
+        "diferencia_speed",
+        "habilidades_compartidas",
+        "misma_linea_evolutiva",
+        "mismo_perfil_tipo",
+        "movimientos_compartidos_can_learn",
+        "movimientos_max",
+        "movimientos_min",
+        "similitud_habilidades_jaccard",
+        "similitud_movepool_jaccard",
+        "tipos_compartidos",
+        "tipos_union"
+      ],
+      "n_variables": 20,
+      "auc": 0.687,
+      "ap": 0.692,
+      "train_positivos": 1341,
+      "train_negativos": 1341,
+      "test_positivos": 447,
+      "test_negativos": 447
+    }
+  ],
+  "control_fuga": {
+    "experimento": "Viabilidad OU con grafo competitivo",
+    "auc": 0.986,
+    "ap": 0.97,
+    "uso": "Solo referencia metodológica; no se usa como evidencia predictiva principal."
+  }
+}
