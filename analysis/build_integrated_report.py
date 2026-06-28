@@ -135,7 +135,7 @@ Las preguntas que guían el reporte son:
 3. ¿Qué tipos o combinaciones de tipos ofrecen mejores perfiles ofensivos y defensivos?
 4. ¿Qué cores competitivos emergen en la red `TEAMMATE_OF` y qué los caracteriza?
 5. ¿Qué cadenas de relaciones explican por qué un Pokémon encaja en una estrategia competitiva?
-6. ¿Puede el grafo descubrir patrones competitivos que no aparecen claramente en un análisis tabular?
+6. ¿Puede el grafo anticipar qué Pokémon podrían funcionar juntos en un equipo competitivo?
 
 **Correspondencia entre preguntas, análisis y utilidad**
 
@@ -143,10 +143,10 @@ Las preguntas que guían el reporte son:
 |---|---|---|---|---|
 | 1. Centralidad competitiva | PageRank en `TEAMMATE_OF` y frecuencia de recursos usados | `Pokemon`, `Move`, `Ability`, `Item`, `Format` | Priorizar amenazas, recursos de preparación y piezas alrededor de las cuales se organiza el metajuego | La centralidad depende de los datos de uso de Smogon cargados y no reemplaza el juicio competitivo |
 | 2. Sustitutos estratégicos | Similitud por repertorio de movimientos y tipos compartidos | `Pokemon`, `Move`, `Type` | Proponer alternativas cuando una pieza no está disponible o no calza con el equipo | No modela EVs, naturalezas, objetos ni rol exacto en batalla |
-| 3. Perfiles ofensivos y defensivos | PageRank del cuadro de tipos y resumen defensivo por combinaciones | `Type`, `EFFECTIVENESS`, `Pokemon` | Diseñar cobertura ofensiva, respuestas defensivas y perfiles de resistencia | No incorpora habilidades que alteran inmunidades ni condiciones dinámicas de combate |
+| 3. Perfiles ofensivos y defensivos | Perfiles individuales, perfiles dobles, ventajas x4 y resistencias x0.25 | `Type`, `EFFECTIVENESS`, `SUPER_EFFECTIVE`, `Pokemon` | Comparar cobertura ofensiva, debilidades, resistencias y neutralidades de tipos | No incorpora habilidades, objetos, movimientos concretos ni condiciones dinámicas de combate |
 | 4. Cores competitivos | Louvain sobre la red `TEAMMATE_OF` | `Pokemon`, `TEAMMATE_OF`, `RUNS_MOVE`, `USED_IN` | Identificar grupos de Pokémon que aparecen juntos y caracterizar su plan de juego | Una comunidad sugiere core, pero no prueba por sí sola un arquetipo cerrado |
 | 5. Cadenas explicativas | Rutas acotadas entre Pokémon, movimientos, tipos y compañeros | `Pokemon`, `Move`, `Type`, `TEAMMATE_OF` | Explicar por qué una pieza encaja en una estrategia y qué sinergias activa | Son ejemplos interpretables, no una enumeración exhaustiva de todos los caminos |
-| 6. Patrones no tabulares | Comparación de métricas tabulares y métricas con señales de grafo | Grafo integrado y variables derivadas | Evaluar si las relaciones agregan señal frente a mirar atributos aislados | Las métricas altas deben leerse con cautela cuando la capa competitiva está cerca de la etiqueta |
+| 6. Compatibilidad competitiva | Comparación entre modelos base y modelos con señales relacionales | Grafo integrado, atributos, movimientos, habilidades y variables derivadas | Evaluar si el grafo aporta señales para anticipar qué Pokémon podrían funcionar juntos | Las métricas altas deben leerse con cautela si las señales competitivas están demasiado cerca de la relación que se quiere predecir |
 
 **Alcance temporal**
 
@@ -476,114 +476,415 @@ que merecen revisión, no para afirmar automáticamente que un Pokémon reemplaz
 al otro en cualquier equipo.
 """)
 
-md("""### 4.3 Tipos y combinaciones con mejores perfiles
+md("""### 4.3 Perfiles ofensivos y defensivos de tipos
 
-El cuadro de tipos se interpreta como red dirigida de efectividad. La centralidad
-ofensiva identifica tipos que se ubican en posiciones influyentes dentro de esa
-red, mientras que el resumen defensivo evalúa combinaciones reales presentes en
-Pokémon del grafo.
+Esta sección separa los perfiles de un solo tipo y de dos tipos para que la
+lectura sea más clara. La idea es distinguir cobertura ofensiva, es decir, a qué
+tipos o combinaciones puede presionar un perfil, de cobertura defensiva, es
+decir, qué ataques recibe como daño reducido, neutral o súper efectivo.
+
+Antes de calcular estas métricas se revisa qué información existe en el grafo.
+En este proyecto, `SUPER_EFFECTIVE` representa solo ventajas x2, mientras que
+`EFFECTIVENESS.factor` contiene el cuadro completo de multiplicadores. Por eso
+se pueden calcular daño normal x1, resistencias x0.5 y resistencias dobles
+x0.25 sin inventar relaciones nuevas.
 """)
 
-code("""run("CALL gds.graph.drop('typechart', false)")
-run('''
-CALL gds.graph.project(
-  'typechart',
-  'Type',
-  {
-    EFFECTIVENESS: {
-      orientation: 'NATURAL'
-    }
-  }
+md("""#### Cómo leer las columnas de cobertura
+
+En las tablas siguientes, `cantidad_pokemon` sí indica cuántos Pokémon de la base
+tienen ese perfil de tipo. En cambio, las columnas ofensivas no cuentan Pokémon:
+cuentan tipos o combinaciones de tipos contra los que el perfil puede atacar con
+cierta efectividad. Por ejemplo, `objetivos_ofensivos_x2` cuenta objetivos a los
+que el perfil golpea de forma súper efectiva, mientras que
+`combinaciones_objetivo_x4` cuenta combinaciones reales de dos tipos que pueden
+recibir una presión híper efectiva.
+
+Las columnas defensivas tampoco cuentan Pokémon. Resumen cuántos tipos ofensivos
+representan amenazas, daño neutral o resistencias frente al perfil analizado.
+`x2` significa súper efectivo, `x4` significa híper efectivo, `x0.5` indica
+resistencia, `x0.25` indica resistencia doble y `x1` corresponde a daño normal o
+neutral, no a resistencia. Finalmente, `balance_ajustado` es un puntaje
+interpretativo para comparar perfiles de tipo; no es una métrica oficial del
+juego ni reemplaza cálculos de daño reales.
+""")
+
+code("""efectividad = df('''
+MATCH (atk:Type)-[r:EFFECTIVENESS]->(def:Type)
+RETURN atk.identifier AS atacante, def.identifier AS defensor, r.factor AS factor
+ORDER BY atacante, defensor
+LIMIT 400
+''')
+
+tipos_pokemon = df('''
+MATCH (p:Pokemon {is_default:true})-[:HAS_TYPE]->(t:Type)
+RETURN p.identifier AS pokemon, t.identifier AS tipo
+ORDER BY pokemon, tipo
+LIMIT 3000
+''')
+
+factores = sorted(efectividad['factor'].dropna().astype(int).unique().tolist())
+efectividad_completa = all(f in factores for f in [50, 100, 200])
+display(pd.DataFrame([{
+    'relacion': 'EFFECTIVENESS',
+    'factores_observados': factores,
+    'permite_x05_x025_x1': efectividad_completa
+}]))
+
+tipos = sorted(set(efectividad['atacante']) | set(efectividad['defensor']))
+factor_map = {
+    (r.atacante, r.defensor): int(r.factor) / 100.0
+    for r in efectividad.itertuples()
+}
+
+def mult(atacante, defensor):
+    return factor_map.get((atacante, defensor), 1.0)
+
+nombres_cobertura = {
+    'ofensiva_x2': 'objetivos_ofensivos_x2',
+    'ofensiva_x4': 'combinaciones_objetivo_x4',
+    'ofensiva_x1': 'objetivos_ofensivos_neutrales_x1',
+    'debilidades_x2': 'amenazas_defensivas_x2',
+    'debilidades_x4': 'amenazas_defensivas_x4',
+    'amenazas_x4': 'tipos_amenaza_x4',
+    'defensiva_x05': 'resistencias_defensivas_x05',
+    'defensiva_x025': 'resistencias_defensivas_x025',
+    'resistencias_x025': 'tipos_resistidos_x025',
+    'defensiva_x1': 'amenazas_neutrales_x1',
+}
+
+def mostrar_columnas_claras(tabla, columnas, n=15):
+    return tabla[columnas].head(n).rename(columns=nombres_cobertura)
+
+tipos_por_pokemon = (
+    tipos_pokemon.groupby('pokemon')['tipo']
+    .apply(lambda s: sorted(set(s)))
+    .reset_index(name='tipos')
 )
-''')
-res = df('''
-CALL gds.pageRank.stream('typechart') YIELD nodeId, score
-RETURN gds.util.asNode(nodeId).identifier AS tipo,
-       round(score * 100000) / 100000.0 AS centralidad_ofensiva
-ORDER BY centralidad_ofensiva DESC
-LIMIT 12
-''')
-display(res)
-if not res.empty:
-    ax = res.head(10).sort_values('centralidad_ofensiva').plot.barh(
-        x='tipo', y='centralidad_ofensiva', legend=False, figsize=(7, 4)
+tipos_por_pokemon['perfil_tipo'] = tipos_por_pokemon['tipos'].apply(lambda xs: ' / '.join(xs))
+
+perfil_ejemplos = (
+    tipos_por_pokemon.groupby('perfil_tipo')['pokemon']
+    .apply(lambda s: ', '.join(list(s)[:5]))
+    .to_dict()
+)
+perfil_cantidad = tipos_por_pokemon.groupby('perfil_tipo')['pokemon'].count().to_dict()
+perfiles_individuales = sorted([xs[0] for xs in tipos_por_pokemon['tipos'] if len(xs) == 1])
+perfiles_dobles = sorted({tuple(xs) for xs in tipos_por_pokemon['tipos'] if len(xs) == 2})
+
+def ofensiva_basica(tipos_ofensivos):
+    mejores = {defensor: max(mult(atk, defensor) for atk in tipos_ofensivos) for defensor in tipos}
+    return {
+        'ofensiva_x2': sum(1 for v in mejores.values() if v == 2.0),
+        'ofensiva_x1': sum(1 for v in mejores.values() if v == 1.0),
+    }
+
+def defensiva(tipos_defensivos):
+    valores = {}
+    for atacante in tipos:
+        total = 1.0
+        for defensor in tipos_defensivos:
+            total *= mult(atacante, defensor)
+        valores[atacante] = total
+    return valores
+
+def ofensiva_x4_contra_combos(tipos_ofensivos):
+    combos = []
+    afectados = []
+    for d1, d2 in perfiles_dobles:
+        perfil = f'{d1} / {d2}'
+        for atk in tipos_ofensivos:
+            if mult(atk, d1) == 2.0 and mult(atk, d2) == 2.0:
+                combos.append(perfil)
+                afectados.extend(perfil_ejemplos.get(perfil, '').split(', '))
+                break
+    combos = sorted(set(c for c in combos if c))
+    afectados = sorted(set(p for p in afectados if p))
+    return combos, afectados
+
+filas_ind = []
+for perfil in sorted(set(perfiles_individuales)):
+    off = ofensiva_basica([perfil])
+    defs = defensiva([perfil])
+    defensiva_x05 = sum(1 for v in defs.values() if v == 0.5)
+    defensiva_x1 = sum(1 for v in defs.values() if v == 1.0)
+    debilidades_x2 = sum(1 for v in defs.values() if v == 2.0)
+    balance_tipo = off['ofensiva_x2'] + defensiva_x05 - debilidades_x2
+    filas_ind.append({
+        'perfil_tipo': perfil,
+        'cantidad_pokemon': perfil_cantidad.get(perfil, 0),
+        'ofensiva_x2': off['ofensiva_x2'],
+        'ofensiva_x1': off['ofensiva_x1'],
+        'defensiva_x05': defensiva_x05,
+        'defensiva_x1': defensiva_x1,
+        'debilidades_x2': debilidades_x2,
+        'balance_tipo': balance_tipo,
+        'balance_ajustado': balance_tipo,
+        'ejemplos_pokemon': perfil_ejemplos.get(perfil, '')
+    })
+
+tabla_individual = pd.DataFrame(filas_ind).sort_values(
+    ['balance_ajustado', 'ofensiva_x2', 'defensiva_x05'],
+    ascending=False
+).reset_index(drop=True)
+""")
+
+md("""#### 3.1 Perfiles de Pokémon de un solo tipo
+
+En los Pokémon de un solo tipo, la lectura es directa: el perfil ofensivo depende
+de lo que ese tipo puede golpear x2, mientras que el perfil defensivo depende de
+qué tipos ofensivos le hacen daño reducido, neutral o súper efectivo. Aquí no se
+incluyen debilidades x4 ni resistencias x0.25 porque esas situaciones aparecen
+por combinación de dos tipos.
+""")
+
+code("""columnas_individuales = [
+    'perfil_tipo', 'cantidad_pokemon',
+    'ofensiva_x2', 'ofensiva_x1',
+    'defensiva_x05', 'defensiva_x1',
+    'debilidades_x2', 'balance_tipo',
+    'ejemplos_pokemon'
+]
+display(mostrar_columnas_claras(tabla_individual, columnas_individuales, n=15))
+
+if not tabla_individual.empty:
+    ax = tabla_individual.head(10).sort_values('balance_tipo').plot.barh(
+        x='perfil_tipo', y='balance_tipo', legend=False, figsize=(8, 4)
     )
-    ax.set_title('Tipos con mayor influencia ofensiva')
-    ax.set_xlabel('Influencia en el cuadro de tipos')
-    ax.set_ylabel('Tipo')
+    ax.set_title('Top 10 perfiles individuales por balance de tipo')
+    ax.set_xlabel('Balance de tipo')
+    ax.set_ylabel('Tipo individual')
     plt.tight_layout()
     plt.show()
-if not res.empty:
-    tipos = lista_texto(res['tipo'])
+    perfiles = lista_texto(tabla_individual['perfil_tipo'])
     display(Markdown(
-        f"En el ranking ofensivo aparecen arriba tipos como {tipos}. Estos tipos destacan porque ocupan posiciones influyentes dentro de la red de efectividades, "
-        "no solo porque tengan una ventaja puntual. En la práctica, esto sugiere que conviene revisar qué Pokémon aprovechan bien esos tipos y qué respuestas "
-        "defensivas necesita un equipo para no quedar demasiado expuesto frente a esa presión."
+        f"Entre los perfiles individuales mejor ubicados aparecen {perfiles}. Estos tipos quedan arriba porque combinan buena cobertura x2, "
+        "resistencias x0.5 y pocas debilidades x2. El balance de tipo no mide daño real ni sets concretos; funciona como una lectura resumida "
+        "del intercambio entre presión ofensiva y seguridad defensiva. En una fila de esta tabla, `cantidad_pokemon` indica cuántos Pokémon tienen ese tipo, "
+        "mientras que las columnas de cobertura resumen interacciones contra tipos: objetivos ofensivos, amenazas defensivas, resistencias y daño neutral."
     ))
 """)
 
-md("""En esta sección, la influencia ofensiva de un tipo se obtiene desde la red
-de efectividades. Un tipo queda más arriba cuando ocupa una posición relevante
-en esa red, no solo cuando tiene una ventaja aislada contra otro tipo. Por eso,
-el ranking debe leerse como una señal de presión estructural: muestra qué tipos
-participan con más fuerza en las relaciones de ventaja del cuadro de tipos.
+md("""#### 3.2 Perfiles de Pokémon de dos tipos
 
-Esta información ayuda a pensar coberturas ofensivas y resistencias necesarias
-al construir equipos. Si un tipo aparece alto, puede convenir revisar qué
-Pokémon lo usan bien, qué compañeros lo apoyan y qué respuestas defensivas son
-necesarias. La limitación es que el análisis trabaja solo con tipos: no incorpora
-daño real, habilidades, objetos, precisión, prioridad ni el contexto de una
-partida.
+Los Pokémon de dos tipos tienen una lectura más rica, pero también más riesgosa.
+Una combinación puede ampliar la cobertura ofensiva y sumar resistencias, aunque
+también puede crear debilidades x4 cuando un mismo tipo atacante es súper
+efectivo contra ambos tipos defensivos. Por eso se agrega un balance ajustado
+que premia cobertura y resistencias, pero penaliza con más fuerza las
+vulnerabilidades dobles.
 """)
 
-code("""query = '''
-MATCH (p:Pokemon {is_default:true})-[:HAS_TYPE]->(def:Type)
-WITH p, collect(DISTINCT def) AS defensas
-MATCH (atk:Type)
-OPTIONAL MATCH (atk)-[e:EFFECTIVENESS]->(d:Type)
-WHERE d IN defensas
-WITH p, defensas, atk,
-     reduce(mult = 1.0, factor IN collect(coalesce(e.factor, 100) / 100.0) | mult * factor) AS multiplicador
-WITH [d IN defensas | d.identifier] AS combinacion,
-     count(CASE WHEN multiplicador = 0.0 THEN 1 END) AS inmunidades,
-     count(CASE WHEN multiplicador > 0.0 AND multiplicador < 1.0 THEN 1 END) AS resistencias,
-     count(CASE WHEN multiplicador > 1.0 THEN 1 END) AS debilidades
-RETURN combinacion,
-       count(*) AS pokemon_con_combinacion,
-       round(avg(inmunidades) * 100) / 100.0 AS inmunidades_promedio,
-       round(avg(resistencias) * 100) / 100.0 AS resistencias_promedio,
-       round(avg(debilidades) * 100) / 100.0 AS debilidades_promedio
-ORDER BY (inmunidades_promedio + resistencias_promedio) DESC, debilidades_promedio ASC
-LIMIT 15
-'''
-res = df(query)
-display(res)
-if not res.empty:
-    combos = lista_texto(res['combinacion'].apply(lambda xs: " / ".join(xs) if isinstance(xs, list) else xs))
+code("""filas_dobles = []
+for t1, t2 in perfiles_dobles:
+    perfil = f'{t1} / {t2}'
+    off = ofensiva_basica([t1, t2])
+    combos_x4, _ = ofensiva_x4_contra_combos([t1, t2])
+    defs = defensiva([t1, t2])
+    debilidades_x2 = sum(1 for v in defs.values() if v == 2.0)
+    debilidades_x4 = sum(1 for v in defs.values() if v == 4.0)
+    amenazas_x4 = sorted([atk for atk, v in defs.items() if v == 4.0])
+    defensiva_x05 = sum(1 for v in defs.values() if v == 0.5)
+    defensiva_x025 = sum(1 for v in defs.values() if v == 0.25)
+    resistencias_x025 = sorted([atk for atk, v in defs.items() if v == 0.25])
+    defensiva_x1 = sum(1 for v in defs.values() if v == 1.0)
+    balance_tipo = off['ofensiva_x2'] - debilidades_x2
+    balance_ajustado = (
+        off['ofensiva_x2'] + len(combos_x4)
+        - debilidades_x2 - debilidades_x4
+        + defensiva_x05 + defensiva_x025
+    )
+    filas_dobles.append({
+        'perfil_tipo': perfil,
+        'cantidad_pokemon': perfil_cantidad.get(perfil, 0),
+        'ofensiva_x2': off['ofensiva_x2'],
+        'ofensiva_x4': len(combos_x4),
+        'ofensiva_x1': off['ofensiva_x1'],
+        'debilidades_x2': debilidades_x2,
+        'debilidades_x4': debilidades_x4,
+        'amenazas_x4': ', '.join(amenazas_x4),
+        'defensiva_x05': defensiva_x05,
+        'defensiva_x025': defensiva_x025,
+        'resistencias_x025': ', '.join(resistencias_x025),
+        'defensiva_x1': defensiva_x1,
+        'balance_tipo': balance_tipo,
+        'balance_ajustado': balance_ajustado,
+        'ejemplos_pokemon': perfil_ejemplos.get(perfil, '')
+    })
+
+tabla_doble = pd.DataFrame(filas_dobles).sort_values(
+    ['balance_ajustado', 'ofensiva_x4', 'debilidades_x4'],
+    ascending=[False, False, True]
+).reset_index(drop=True)
+
+columnas_dobles = [
+    'perfil_tipo', 'cantidad_pokemon',
+    'ofensiva_x2', 'ofensiva_x4',
+    'debilidades_x2', 'debilidades_x4', 'amenazas_x4',
+    'defensiva_x025', 'resistencias_x025',
+    'balance_ajustado', 'ejemplos_pokemon'
+]
+display(mostrar_columnas_claras(tabla_doble, columnas_dobles, n=15))
+
+if not tabla_doble.empty:
+    ax = tabla_doble.head(10).sort_values('balance_ajustado').plot.barh(
+        x='perfil_tipo', y='balance_ajustado', legend=False, figsize=(9, 4)
+    )
+    ax.set_title('Top 10 perfiles dobles por balance ajustado')
+    ax.set_xlabel('Balance ajustado')
+    ax.set_ylabel('Combinación de tipos')
+    plt.tight_layout()
+    plt.show()
+    perfiles = lista_texto(tabla_doble['perfil_tipo'])
     display(Markdown(
-        f"Entre las combinaciones defensivas mejor ubicadas aparecen {combos}. Estas combinaciones quedan arriba porque acumulan más resistencias o inmunidades "
-        "y reducen la cantidad de debilidades visibles en el cuadro de tipos. La lectura estratégica es que pueden servir como puntos de apoyo para entrar al campo "
-        "o cubrir amenazas, aunque la viabilidad real depende también del Pokémon concreto que tenga esa combinación."
+        f"Entre las combinaciones dobles mejor ubicadas aparecen {perfiles}. Estas combinaciones suelen quedar arriba porque suman cobertura ofensiva, "
+        "resistencias útiles y pocas amenazas x4. Una debilidad x4 pesa más que una debilidad x2 porque marca un punto de entrada especialmente peligroso "
+        "para el rival; por eso el balance ajustado la penaliza explícitamente. En una fila como `fire / ground`, `cantidad_pokemon` cuenta cuántos Pokémon "
+        "tienen esa combinación, mientras que las demás columnas resumen interacciones de tipo: qué puede golpear, qué lo amenaza y si existen riesgos críticos x4 "
+        "o resistencias fuertes x0.25."
     ))
 """)
 
-md("""La tabla de combinaciones defensivas resume cuántas resistencias,
-inmunidades y debilidades tienen ciertos perfiles de tipo presentes en Pokémon
-del grafo. Una combinación aparece mejor posicionada cuando ofrece más entradas
-seguras frente a ataques rivales o cuando reduce la cantidad de debilidades que
-el equipo debe cubrir con otras piezas.
+md("""#### 3.3 Ventajas ofensivas x4 contra combinaciones reales
 
-En términos estratégicos, estos resultados ayudan a buscar Pokémon capaces de
-absorber presión y sostener un core. Un buen perfil defensivo puede permitir
-entrar al campo con menor costo, cubrir amenazas comunes o proteger a compañeros
-más frágiles. Sin embargo, el tipo no lo explica todo: un Pokémon puede tener
-una combinación defensiva atractiva y aun así ser poco viable si carece de
-velocidad, daño, recuperación, utilidad o una habilidad adecuada.
+Una ventaja x4 aparece cuando un tipo ofensivo golpea súper efectivo a los dos
+tipos de una combinación defensiva real. Esta vista es importante porque un tipo
+puede no solo tener buena cobertura x2, sino además castigar de forma mucho más
+fuerte a perfiles dobles concretos presentes en el grafo.
+""")
 
-El grafo de tipos es valioso porque traduce relaciones de efectividad en
-perfiles comparables, pero sigue siendo una simplificación. Para una evaluación
-competitiva completa habría que incorporar habilidades que cambian inmunidades,
-objetos, movimientos reales y condiciones específicas de batalla.
+code("""filas_x4 = []
+for atacante in tipos:
+    combos = []
+    afectados = []
+    for d1, d2 in perfiles_dobles:
+        if mult(atacante, d1) == 2.0 and mult(atacante, d2) == 2.0:
+            perfil = f'{d1} / {d2}'
+            combos.append(perfil)
+            afectados.extend(perfil_ejemplos.get(perfil, '').split(', '))
+    combos = sorted(set(combos))
+    afectados = sorted(set(p for p in afectados if p))
+    if combos:
+        filas_x4.append({
+            'tipo_ofensivo': atacante,
+            'combinaciones_x4': len(combos),
+            'ejemplos_combinaciones': ', '.join(combos[:5]),
+            'ejemplos_pokemon_afectados': ', '.join(afectados[:5])
+        })
+
+tabla_x4 = pd.DataFrame(filas_x4).sort_values(
+    ['combinaciones_x4', 'tipo_ofensivo'],
+    ascending=[False, True]
+).reset_index(drop=True)
+
+display(tabla_x4.head(15))
+if not tabla_x4.empty:
+    ax = tabla_x4.head(10).sort_values('combinaciones_x4').plot.barh(
+        x='tipo_ofensivo', y='combinaciones_x4', legend=False, figsize=(8, 4)
+    )
+    ax.set_title('Tipos ofensivos con más oportunidades x4')
+    ax.set_xlabel('Combinaciones reales golpeadas x4')
+    ax.set_ylabel('Tipo ofensivo')
+    plt.tight_layout()
+    plt.show()
+    tipos_x4 = lista_texto(tabla_x4['tipo_ofensivo'])
+    display(Markdown(
+        f"Los tipos ofensivos que más aparecen en esta vista son {tipos_x4}. Su valor no viene solo de golpear x2 a tipos individuales, "
+        "sino de amenazar combinaciones dobles reales con daño x4. Esto vuelve esas coberturas especialmente relevantes al preparar respuestas contra perfiles vulnerables."
+    ))
+""")
+
+md("""#### 3.4 Resistencias dobles x0.25
+
+También puede ocurrir lo contrario: si ambos tipos de una combinación resisten
+el mismo tipo ofensivo, el daño recibido se aproxima a x0.25. Esa resistencia
+doble puede ser estratégicamente valiosa porque permite entrar con más seguridad
+frente a amenazas concretas. Este cálculo solo se reporta porque el grafo sí
+contiene multiplicadores completos en `EFFECTIVENESS.factor`.
+""")
+
+code("""if efectividad_completa:
+    tabla_x025 = tabla_doble[tabla_doble['defensiva_x025'] > 0][[
+        'perfil_tipo', 'defensiva_x025', 'resistencias_x025',
+        'cantidad_pokemon', 'ejemplos_pokemon'
+    ]].sort_values(['defensiva_x025', 'cantidad_pokemon'], ascending=False).reset_index(drop=True)
+    display(mostrar_columnas_claras(tabla_x025, [
+        'perfil_tipo', 'defensiva_x025', 'resistencias_x025',
+        'cantidad_pokemon', 'ejemplos_pokemon'
+    ], n=15))
+    if not tabla_x025.empty:
+        ax = tabla_x025.head(10).sort_values('defensiva_x025').plot.barh(
+            x='perfil_tipo', y='defensiva_x025', legend=False, figsize=(8, 4)
+        )
+        ax.set_title('Perfiles con más resistencias x0.25')
+        ax.set_xlabel('Cantidad de resistencias x0.25')
+        ax.set_ylabel('Combinación de tipos')
+        plt.tight_layout()
+        plt.show()
+        perfiles = lista_texto(tabla_x025['perfil_tipo'])
+        display(Markdown(
+            f"Perfiles como {perfiles} aparecen arriba porque ambos tipos resisten algunos de los mismos ataques. "
+            "Esa doble resistencia no garantiza viabilidad por sí sola, pero sí puede convertir a estos perfiles en buenas respuestas defensivas frente a amenazas específicas."
+        ))
+else:
+    display(Markdown(
+        "El grafo actual permite observar relaciones de súper efectividad, pero no contiene información suficiente para calcular resistencias x0.5, "
+        "resistencias x0.25 o neutralidades x1 de manera confiable. Por eso, esta parte se reporta como una limitación del análisis y como una extensión futura."
+    ))
+""")
+
+md("""#### 3.5 Comparación general entre perfiles individuales y dobles
+
+La comparación final junta perfiles individuales y dobles bajo una misma métrica
+de balance ajustado. En los tipos individuales, el balance resume cobertura x2,
+resistencias x0.5 y debilidades x2. En los tipos dobles, además se consideran
+ventajas ofensivas x4, debilidades x4 y resistencias x0.25. La métrica no busca
+ser un modelo perfecto de daño, sino una forma simple de ordenar perfiles para
+discusión estratégica.
+""")
+
+code("""tabla_ind_comp = tabla_individual.assign(
+    categoria_tipo='Individual',
+    ofensiva_x4=0,
+    debilidades_x4=0,
+    defensiva_x025=0
+)
+tabla_dob_comp = tabla_doble.assign(categoria_tipo='Doble')
+
+columnas_comparacion = [
+    'categoria_tipo', 'perfil_tipo', 'cantidad_pokemon',
+    'ofensiva_x2', 'ofensiva_x4', 'ofensiva_x1',
+    'debilidades_x2', 'debilidades_x4',
+    'defensiva_x05', 'defensiva_x025', 'defensiva_x1',
+    'balance_ajustado', 'ejemplos_pokemon'
+]
+
+tabla_general = pd.concat([
+    tabla_ind_comp[columnas_comparacion],
+    tabla_dob_comp[columnas_comparacion]
+], ignore_index=True).sort_values(
+    ['balance_ajustado', 'ofensiva_x4', 'debilidades_x4'],
+    ascending=[False, False, True]
+).reset_index(drop=True)
+
+display(mostrar_columnas_claras(tabla_general, columnas_comparacion, n=20))
+if not tabla_general.empty:
+    graf = tabla_general.head(10).copy()
+    graf['perfil'] = graf['categoria_tipo'] + ': ' + graf['perfil_tipo']
+    ax = graf.sort_values('balance_ajustado').plot.barh(
+        x='perfil', y='balance_ajustado', legend=False, figsize=(9, 5)
+    )
+    ax.set_title('Comparación general de perfiles de tipo')
+    ax.set_xlabel('Balance ajustado')
+    ax.set_ylabel('Perfil')
+    plt.tight_layout()
+    plt.show()
+    mejores = lista_texto(tabla_general['perfil_tipo'])
+    display(Markdown(
+        f"En la comparación general aparecen arriba perfiles como {mejores}. Los perfiles dobles pueden ganar por sumar resistencias y cobertura, "
+        "pero también pueden caer si introducen amenazas x4. Los perfiles individuales suelen ser más simples de leer: no generan vulnerabilidades dobles, "
+        "aunque tampoco acceden a las mismas sinergias defensivas u ofensivas de una combinación."
+    ))
 """)
 
 md("""### 4.4 Grupos o cores que aparecen juntos en equipos
@@ -598,59 +899,157 @@ CALL gds.louvain.stream('teammates') YIELD nodeId, communityId
 WITH communityId, gds.util.asNode(nodeId) AS p
 OPTIONAL MATCH (p)-[u:USED_IN]->(:Format {tier:'gen9ou'})
 OPTIONAL MATCH (p)-[:RUNS_MOVE]->(m:Move)
+OPTIONAL MATCH (p)-[:HAS_TYPE]->(t:Type)
+OPTIONAL MATCH (p)-[:USES_ABILITY]->(ab:Ability)
+OPTIONAL MATCH (p)-[:HOLDS_ITEM]->(it:Item)
 RETURN communityId AS comunidad,
        count(DISTINCT p) AS tamaño,
        round(avg(coalesce(u.usage, 0.0)) * 100) / 100.0 AS uso_promedio,
        collect(DISTINCT p.identifier)[..10] AS muestra_pokemon,
-       collect(DISTINCT m.identifier)[..8] AS movimientos_frecuentes_en_muestra
+       collect(DISTINCT t.identifier)[..6] AS tipos_frecuentes_en_muestra,
+       collect(DISTINCT m.identifier)[..8] AS movimientos_frecuentes_en_muestra,
+       collect(DISTINCT ab.identifier)[..5] AS habilidades_frecuentes_en_muestra,
+       collect(DISTINCT it.identifier)[..5] AS objetos_frecuentes_en_muestra
 ORDER BY uso_promedio DESC, tamaño DESC
 LIMIT 8
 ''')
-display(res)
+
+def nombrar_core(fila):
+    tipos = set(fila.get('tipos_frecuentes_en_muestra', []) or [])
+    movimientos = set(fila.get('movimientos_frecuentes_en_muestra', []) or [])
+    habilidades = set(fila.get('habilidades_frecuentes_en_muestra', []) or [])
+    objetos = set(fila.get('objetos_frecuentes_en_muestra', []) or [])
+
+    lluvia = {'rain-dance', 'hydro-pump', 'surf', 'waterfall', 'aqua-jet'}
+    sol = {'sunny-day', 'solar-beam', 'synthesis', 'flamethrower', 'fire-blast'}
+    desgaste = {'protect', 'leech-seed', 'toxic', 'will-o-wisp', 'recover', 'roost', 'synthesis', 'wish', 'soft-boiled'}
+    setup = {'swords-dance', 'nasty-plot', 'dragon-dance', 'calm-mind', 'bulk-up', 'quiver-dance', 'shell-smash'}
+    control = {'rapid-spin', 'defog', 'stealth-rock', 'spikes', 'toxic-spikes', 'knock-off', 'taunt', 'encore'}
+    velocidad = {'u-turn', 'volt-switch', 'agility', 'trailblaze', 'rapid-spin', 'dragon-dance'}
+
+    if 'trick-room' in movimientos:
+        nombre = 'Core Trick Room'
+        base = 'presencia de trick-room'
+    elif movimientos & lluvia and 'water' in tipos:
+        nombre = 'Core de lluvia / agua'
+        base = 'tipos frecuentes: water; movimientos de agua o lluvia'
+    elif movimientos & sol and ({'fire', 'grass'} & tipos):
+        nombre = 'Core de sol / fuego-planta'
+        base = 'tipos frecuentes: fire/grass; movimientos asociados a sol o fuego-planta'
+    elif movimientos & desgaste:
+        nombre = 'Core defensivo de desgaste'
+        base = 'movimientos de recuperación/desgaste'
+    elif movimientos & setup:
+        nombre = 'Core de setup ofensivo'
+        base = 'movimientos de aumento de estadísticas'
+    elif movimientos & control:
+        nombre = 'Core de soporte y control'
+        base = 'movimientos de control, peligros de entrada o limpieza'
+    elif movimientos & velocidad:
+        nombre = 'Core de velocidad / presión ofensiva'
+        base = 'movimientos de pivoteo, velocidad o presión'
+    elif 'water' in tipos:
+        nombre = 'Core basado en tipos agua'
+        base = 'muestra con varios Pokémon de tipo water'
+    elif {'fire', 'grass'} & tipos:
+        nombre = 'Core mixto fuego-planta'
+        base = 'presencia de tipos fire/grass en la muestra'
+    else:
+        nombre = 'Core mixto con soporte'
+        base = 'mezcla de Pokémon y herramientas sin etiqueta dominante clara'
+
+    partes = [base]
+    if movimientos:
+        partes.append('movimientos frecuentes: ' + ', '.join(list(movimientos)[:4]))
+    if tipos:
+        partes.append('tipos frecuentes: ' + ', '.join(list(tipos)[:4]))
+    if habilidades:
+        partes.append('habilidades observadas: ' + ', '.join(list(habilidades)[:3]))
+    if objetos:
+        partes.append('objetos observados: ' + ', '.join(list(objetos)[:3]))
+    return pd.Series({'nombre_core': nombre, 'criterio_nombre': '; '.join(partes)})
+
 if not res.empty:
+    res = pd.concat([res, res.apply(nombrar_core, axis=1)], axis=1)
+    res['nombre_grafico'] = res.apply(
+        lambda r: f"{r['nombre_core']} (com. {r['comunidad']})",
+        axis=1
+    )
+
+columnas_core = [
+    'comunidad', 'nombre_core', 'criterio_nombre', 'tamaño', 'uso_promedio',
+    'muestra_pokemon', 'tipos_frecuentes_en_muestra',
+    'movimientos_frecuentes_en_muestra',
+    'habilidades_frecuentes_en_muestra', 'objetos_frecuentes_en_muestra'
+]
+if not res.empty:
+    display(res[columnas_core])
     ax = res.sort_values('tamaño').plot.barh(
-        x='comunidad', y='tamaño', legend=False, figsize=(7, 4)
+        x='nombre_grafico', y='tamaño', legend=False, figsize=(9, 5)
     )
     ax.set_title('Tamaño de comunidades competitivas')
     ax.set_xlabel('Cantidad de Pokémon')
-    ax.set_ylabel('Comunidad')
+    ax.set_ylabel('Core interpretativo')
     plt.tight_layout()
     plt.show()
-if not res.empty:
+
+    ax = res.sort_values('uso_promedio').plot.barh(
+        x='nombre_grafico', y='uso_promedio', legend=False, figsize=(9, 5)
+    )
+    ax.set_title('Uso promedio por comunidad competitiva')
+    ax.set_xlabel('Uso promedio en Smogon')
+    ax.set_ylabel('Core interpretativo')
+    plt.tight_layout()
+    plt.show()
+
     fila = res.iloc[0]
     muestra = lista_texto(fila['muestra_pokemon'], max_items=4)
     display(Markdown(
-        f"La comunidad {fila['comunidad']} aparece como una de las más relevantes de esta tabla, con una muestra que incluye {muestra}. "
-        "Esto no permite etiquetarla automáticamente como lluvia, stall, balance u otro arquetipo, porque la consulta no prueba ese estilo por sí sola. "
-        "Lo que sí indica es que esos Pokémon se ubican en una zona densa de co-ocurrencia y merecen revisarse como posible core o grupo de apoyo mutuo."
+        f"La comunidad {fila['comunidad']} se etiqueta como **{fila['nombre_core']}** a partir de una muestra que incluye {muestra}. "
+        f"El criterio usado fue: {fila['criterio_nombre']}. Esta etiqueta resume evidencia visible en la tabla, pero no debe leerse como una categoría oficial."
     ))
+else:
+    display(res)
 """)
 
-md("""Una comunidad competitiva es un grupo de Pokémon que tienden a aparecer
-conectados entre sí en la red de compañeros. En lenguaje de construcción de
-equipos, estos grupos pueden parecerse a cores: conjuntos de piezas que se usan
-juntas porque cubren debilidades, habilitan una misma estrategia o repiten un
-patrón exitoso dentro del metajuego.
+md("""El algoritmo entrega comunidades numeradas, pero esos números no tienen
+significado competitivo por sí solos. Por eso, en esta versión se conserva la
+columna `comunidad` como identificador técnico y se agrega `nombre_core` como
+una etiqueta interpretativa. Ese nombre se construye a partir de la evidencia
+disponible en la tabla: Pokémon representativos, tipos observados, movimientos
+frecuentes y, cuando aparecen, habilidades u objetos. Así, una comunidad deja de
+ser solo un número interno y pasa a ser una hipótesis más fácil de leer.
 
-La tabla muestra el tamaño de cada comunidad, una muestra de sus Pokémon y
-algunos movimientos frecuentes. Las comunidades más grandes no son
-necesariamente mejores, pero sí indican zonas densas de co-ocurrencia. En la
-práctica, esto ayuda a observar estilos de equipo que no se ven al mirar un
-Pokémon aislado, como presión ofensiva, soporte defensivo, control de velocidad
-o pivoteo.
+Estas etiquetas no deben entenderse como una clasificación oficial del
+metajuego. Funcionan como una ayuda de interpretación: permiten pasar de una
+comunidad anónima a una posible lectura sobre su función estratégica, como
+soporte, desgaste, presión ofensiva, control o afinidad por ciertos tipos. Si la
+evidencia no es suficiente para una etiqueta fuerte, el nombre se mantiene
+prudente, por ejemplo como core mixto o core general con soporte.
 
-La detección de comunidades sugiere patrones, pero no les asigna significado por
-sí sola. Para afirmar que una comunidad corresponde a un arquetipo competitivo
-concreto, todavía hay que revisar conjuntos de movimientos, objetos, roles y
-partidas. El grafo muestra dónde mirar; la interpretación competitiva completa
-requiere análisis humano.
+El gráfico de tamaño muestra cuántos Pokémon agrupa cada comunidad, mientras que
+el gráfico de uso promedio permite comparar esa cantidad con una señal de
+presencia competitiva. Una comunidad grande no siempre es la más influyente, y
+una comunidad de alto uso promedio puede estar formada por menos piezas pero más
+presentes en el formato. Para confirmar que un grupo corresponde a un core real
+habría que revisar conjuntos de movimientos, objetos, EVs, roles concretos y
+contexto competitivo.
 """)
 
 md("""### 4.5 Cadenas que explican por qué un Pokémon encaja
 
-Las rutas relacionales conectan una pieza con recursos y compañeros. Este bloque
-muestra cadenas acotadas entre Pokémon usados en OU, movimientos que ejecutan,
-tipos de esos movimientos y compañeros frecuentes.
+Las cadenas explicativas conectan una pieza con recursos y contexto competitivo.
+La idea no es listar todas las combinaciones posibles, sino mostrar ejemplos
+representativos de cómo el grafo une Pokémon, movimientos, tipos de movimiento,
+compañeros frecuentes y señales de uso. Para que el resultado sea más útil, se
+limita la repetición de un mismo Pokémon y se priorizan cadenas diversas.
+""")
+
+md("""#### 5.1 Cadenas explicativas representativas
+
+Cada fila de esta tabla resume una cadena principal para un Pokémon distinto.
+Los movimientos y compañeros aparecen como listas, no como filas separadas, para
+evitar que una sola pieza muy usada domine todo el análisis.
 """)
 
 code("""query = '''
@@ -658,6 +1057,105 @@ MATCH (p:Pokemon)-[u:USED_IN]->(:Format {tier:'gen9ou'})
 WITH p, u
 ORDER BY u.usage DESC
 LIMIT 12
+OPTIONAL MATCH (p)-[:HAS_TYPE]->(tp:Type)
+WITH p, u, collect(DISTINCT tp.identifier)[..2] AS tipos_pokemon
+CALL {
+  WITH p
+  MATCH (p)-[:RUNS_MOVE]->(m:Move)
+  OPTIONAL MATCH (m)-[:MOVE_TYPE]->(mt:Type)
+  RETURN collect(DISTINCT m.identifier)[..5] AS movimientos_representativos,
+         collect(DISTINCT mt.identifier)[..5] AS tipos_de_movimientos
+}
+CALL {
+  WITH p
+  MATCH (p)-[tm:TEAMMATE_OF]-(aliado:Pokemon)
+  WITH aliado, max(coalesce(tm.pct, 0.0)) AS co_uso
+  ORDER BY co_uso DESC
+  LIMIT 3
+  RETURN collect(aliado.identifier) AS companeros_frecuentes,
+         round(avg(co_uso) * 100) / 100.0 AS co_uso_promedio,
+         round(max(co_uso) * 100) / 100.0 AS co_uso_maximo
+}
+RETURN p.identifier AS pokemon,
+       round(u.usage * 100) / 100.0 AS uso_smogon,
+       tipos_pokemon,
+       movimientos_representativos,
+       tipos_de_movimientos,
+       companeros_frecuentes,
+       co_uso_promedio,
+       co_uso_maximo
+ORDER BY uso_smogon DESC
+LIMIT 12
+'''
+res_cadenas = df(query)
+
+def lectura_cadena(fila):
+    movimientos = fila['movimientos_representativos'] or []
+    tipos_mov = fila['tipos_de_movimientos'] or []
+    companeros = fila['companeros_frecuentes'] or []
+    mov_txt = ', '.join(movimientos[:3]) if movimientos else 'movimientos no detallados'
+    tipos_txt = ', '.join(tipos_mov[:3]) if tipos_mov else 'tipos no detallados'
+    comp_txt = ', '.join(companeros[:3]) if companeros else 'compañeros no detallados'
+    return (
+        f"Conecta herramientas como {mov_txt} ({tipos_txt}) con compañeros frecuentes como {comp_txt}. "
+        "La cadena sugiere una función posible dentro de equipos reales, pero no demuestra por sí sola un conjunto exacto."
+    )
+
+if not res_cadenas.empty:
+    res_cadenas['cadena_explicativa'] = res_cadenas.apply(
+        lambda r: (
+            f"{r['pokemon']} -> {' / '.join(r['movimientos_representativos'] or [])} "
+            f"-> {' / '.join(r['tipos_de_movimientos'] or [])} "
+            f"-> {' / '.join(r['companeros_frecuentes'] or [])}"
+        ),
+        axis=1
+    )
+    res_cadenas['lectura_estrategica'] = res_cadenas.apply(lectura_cadena, axis=1)
+
+display(res_cadenas)
+if not res_cadenas.empty:
+    ax = res_cadenas.head(10).sort_values('uso_smogon').plot.barh(
+        x='pokemon', y='uso_smogon', legend=False, figsize=(8, 4)
+    )
+    ax.set_title('Pokémon representativos en cadenas explicativas')
+    ax.set_xlabel('Uso en Smogon')
+    ax.set_ylabel('Pokémon')
+    plt.tight_layout()
+    plt.show()
+    ejemplos = lista_texto(res_cadenas['pokemon'])
+    display(Markdown(
+        f"La tabla resume cadenas para Pokémon distintos, como {ejemplos}. En vez de expandir cada movimiento y cada compañero en filas separadas, "
+        "cada fila reúne una muestra de herramientas y vínculos competitivos. Esto permite comparar funciones sin que una sola pieza de alto uso ocupe casi toda la salida."
+    ))
+""")
+
+md("""La tabla no debe leerse como una receta exacta de equipo, sino como una
+explicación de conexiones. Para cada Pokémon, el grafo permite unir su presencia
+competitiva con algunos movimientos relevantes y con compañeros que aparecen
+asociados en la red. Esto ayuda a pasar de una pregunta simple, como qué
+movimientos aprende o usa un Pokémon, a una pregunta más estratégica: qué tipo
+de función puede cumplir y con qué otras piezas suele conectarse.
+
+Los movimientos listados no implican necesariamente un conjunto competitivo completo.
+Funcionan como evidencia disponible en el grafo para describir capacidades
+posibles, mientras que los compañeros frecuentes aportan contexto de equipo.
+Para confirmar un conjunto real habría que revisar objeto, EVs, habilidad,
+formato y uso concreto en partidas.
+""")
+
+md("""#### 5.2 Ejemplos de cadenas concretas
+
+La tabla siguiente baja un nivel de detalle y muestra ejemplos específicos de
+Pokémon, movimiento y compañero frecuente. Se limita la repetición para mantener
+diversidad: primero se ordenan las posibles cadenas por uso y co-uso, y luego se
+conserva como máximo una fila principal por Pokémon.
+""")
+
+code("""query = '''
+MATCH (p:Pokemon)-[u:USED_IN]->(:Format {tier:'gen9ou'})
+WITH p, u
+ORDER BY u.usage DESC
+LIMIT 18
 MATCH (p)-[tm:TEAMMATE_OF]-(aliado:Pokemon)
 OPTIONAL MATCH (p)-[:RUNS_MOVE]->(m:Move)
 OPTIONAL MATCH (m)-[:MOVE_TYPE]->(mt:Type)
@@ -665,49 +1163,124 @@ RETURN p.identifier AS pokemon,
        round(u.usage * 100) / 100.0 AS uso_smogon,
        m.identifier AS movimiento_usado,
        mt.identifier AS tipo_del_movimiento,
-       aliado.identifier AS compañero_frecuente,
+       aliado.identifier AS companero_frecuente,
        round(coalesce(tm.pct, 0.0) * 100) / 100.0 AS co_uso
 ORDER BY uso_smogon DESC, co_uso DESC
-LIMIT 20
+LIMIT 80
 '''
-res = df(query)
-display(res)
-if not res.empty:
+ejemplos_cadenas = df(query)
+columnas_ejemplos = ['pokemon', 'movimiento_usado', 'tipo_del_movimiento',
+                    'companero_frecuente', 'co_uso', 'explicacion_cadena']
+if not ejemplos_cadenas.empty:
+    ejemplos_cadenas = (
+        ejemplos_cadenas
+        .dropna(subset=['movimiento_usado', 'companero_frecuente'])
+        .drop_duplicates(subset=['pokemon'])
+        .head(8)
+        .reset_index(drop=True)
+    )
+    ejemplos_cadenas['explicacion_cadena'] = ejemplos_cadenas.apply(
+        lambda r: (
+            f"{r['pokemon']} se conecta con {r['movimiento_usado']} de tipo {r['tipo_del_movimiento']} "
+            f"y con {r['companero_frecuente']} como compañero frecuente. Esto sugiere una relación entre herramienta, cobertura o utilidad y contexto competitivo."
+        ),
+        axis=1
+    )
+else:
+    ejemplos_cadenas = pd.DataFrame(columns=columnas_ejemplos)
+display(ejemplos_cadenas[columnas_ejemplos])
+if not ejemplos_cadenas.empty:
     ejemplos = "; ".join(
-        f"{r['pokemon']} usa {r['movimiento_usado']} ({r['tipo_del_movimiento']}) y aparece con {r['compañero_frecuente']}"
-        for _, r in res.head(2).iterrows()
+        f"{r['pokemon']} -> {r['movimiento_usado']} -> {r['companero_frecuente']}"
+        for _, r in ejemplos_cadenas.head(2).iterrows()
     )
     display(Markdown(
-        f"Como ejemplo, la tabla muestra cadenas como: {ejemplos}. Estas rutas son útiles porque conectan una pieza con una herramienta concreta y con un compañero frecuente. "
-        "La interpretación estratégica no depende solo del nombre del Pokémon, sino de cómo ese movimiento y esa relación de equipo ayudan a explicar por qué puede encajar en una construcción."
+        f"Ejemplos como {ejemplos} muestran cómo una cadena concreta puede justificar una hipótesis estratégica. "
+        "No se afirma causalidad: el grafo no prueba que el movimiento cause la asociación con el compañero, pero sí muestra que esas entidades aparecen conectadas en la capa competitiva."
     ))
 """)
 
-md("""Estas cadenas muestran una de las ventajas más claras del grafo: permiten
-explicar conexiones, no solo listar atributos. Cada fila une un Pokémon con un
-movimiento usado, el tipo de ese movimiento y un compañero frecuente. Así se
-puede pasar de una descripción simple, como "este Pokémon aparece en OU", a una
-explicación más estratégica sobre qué herramienta aporta y con quién suele
-combinarse.
-
-Una cadena de relaciones no pretende resumir todo el rol de un Pokémon, pero sí
-ofrece una pista interpretable. Si un Pokémon aparece asociado a cierto tipo de
-movimiento y a un compañero recurrente, eso puede sugerir cobertura ofensiva,
-apoyo defensivo, presión conjunta o una sinergia de construcción. La utilidad
-práctica está en convertir datos dispersos en una explicación que pueda leerse
-como parte de un plan de equipo.
-
-El cuidado principal es que estas rutas son ejemplos acotados. No muestran todas
-las razones por las que un Pokémon encaja en una estrategia ni reemplazan la
-revisión de sets completos, turnos de juego o matchups. Funcionan como evidencia
-relacional para iniciar la interpretación.
+md("""Estas cadenas concretas sirven como ejemplos interpretables, no como prueba
+definitiva de causalidad. El valor del grafo está en unir información que en
+tablas separadas quedaría aislada: presencia competitiva, movimientos, tipos de
+movimiento y compañeros frecuentes. Al limitar la repetición de Pokémon, la
+sección muestra una variedad mayor de posibles funciones estratégicas y evita
+que el análisis quede dominado por una sola pieza muy usada.
 """)
 
-md("""### 4.6 ¿El grafo descubre patrones que no se ven claramente en tablas?
+md("""### 4.6 Pregunta 6: ¿Puede el grafo anticipar qué Pokémon podrían funcionar juntos en un equipo competitivo?
 
-La evidencia se resume con métricas ya calculadas por el archivo externo de ML.
-El cuaderno no ejecuta ese archivo: solo muestra el resumen para mantener el
-tiempo de ejecución controlado.
+Esta pregunta evalúa el valor predictivo del grafo. No se busca construir
+automáticamente un equipo completo de seis Pokémon, sino revisar si la
+estructura integrada del grafo contiene señales que ayuden a anticipar
+compatibilidad competitiva entre Pokémon. En este contexto, predecir
+compatibilidad significa estimar si dos piezas podrían tener sentido dentro de
+una misma estrategia, a partir de información como tipos, estadísticas,
+movimientos, habilidades y relaciones estructurales.
+
+La aclaración metodológica es importante: si se quiere predecir una relación de
+equipo, como `TEAMMATE_OF`, no se debería usar esa misma relación como entrada
+directa del modelo. Eso produciría fuga de información, porque el modelo estaría
+mirando una versión de la respuesta que intenta predecir. Por eso, los
+resultados deben distinguir entre señales generales del grafo y señales
+competitivas que pueden estar demasiado cerca de la variable objetivo.
+""")
+
+md("""#### 6.1 Qué información se usa para predecir
+
+La siguiente tabla resume los bloques de información que pueden alimentar una
+predicción de compatibilidad. La idea es separar las señales relativamente
+generales, como tipos o estadísticas, de las señales competitivas más delicadas,
+como relaciones derivadas de Smogon. Estas últimas pueden ser muy útiles, pero
+también requieren una lectura más cuidadosa cuando se usan para predecir vínculos
+entre Pokémon.
+""")
+
+code("""bloques_prediccion = pd.DataFrame([
+    {
+        "bloque_de_informacion": "Atributos básicos",
+        "ejemplos": "stats base, tipos",
+        "por_que_podria_ayudar": "Permite comparar perfiles generales de poder, velocidad, resistencia y cobertura de tipo.",
+        "riesgo_o_limitacion": "Es una señal simple; no captura roles, sinergias ni decisiones de equipo."
+    },
+    {
+        "bloque_de_informacion": "Movepool y habilidades",
+        "ejemplos": "movimientos aprendidos, habilidades disponibles",
+        "por_que_podria_ayudar": "Ayuda a detectar funciones parecidas o complementarias, como cobertura ofensiva, soporte o presión defensiva.",
+        "riesgo_o_limitacion": "No todos los movimientos aprendidos se usan realmente en competitivo y falta el contexto de set, EVs u objeto."
+    },
+    {
+        "bloque_de_informacion": "Estructura del grafo",
+        "ejemplos": "similitud funcional, caminos, comunidades, tipos compartidos",
+        "por_que_podria_ayudar": "Conecta información dispersa y puede revelar patrones que no aparecen al mirar tablas aisladas.",
+        "riesgo_o_limitacion": "La utilidad depende de qué relaciones estén cargadas y de cómo se construyeron."
+    },
+    {
+        "bloque_de_informacion": "Señal competitiva",
+        "ejemplos": "uso Smogon, relaciones competitivas, cercanía a compañeros frecuentes",
+        "por_que_podria_ayudar": "Puede capturar experiencia observada del metajuego y asociaciones reales entre piezas.",
+        "riesgo_o_limitacion": "Debe usarse con cautela: si está muy cerca de `TEAMMATE_OF` o de la etiqueta a predecir, puede haber fuga de información."
+    },
+])
+
+display(bloques_prediccion)
+""")
+
+md("""#### 6.2 Resultados del modelo
+
+Los resultados se muestran como un resumen de métricas ya calculadas por el
+archivo externo de ML. El cuaderno no ejecuta `analysis/graph_ml_integrated.py`;
+solo presenta sus métricas principales para mantener controlado el tiempo de
+ejecución del reporte.
+
+En la tabla, el modelo con `BST base` funciona como punto de comparación porque
+usa información muy básica. El bloque de `Repertorio de movimientos +
+habilidades` agrega señales funcionales sobre lo que un Pokémon puede hacer. La
+versión de `Grafo competitivo` incorpora estructura relacional, lo que puede
+mejorar mucho el desempeño, aunque también exige cautela si esas relaciones se
+parecen demasiado al objetivo. Por último, la predicción de enlaces
+`COMPATIBLE` intenta estimar si dos nodos deberían estar conectados dentro del
+grafo.
 """)
 
 code("""metricas_ml = pd.DataFrame([
@@ -717,7 +1290,17 @@ code("""metricas_ml = pd.DataFrame([
     {"experimento": "Predicción de enlaces COMPATIBLE", "variables": "Experimento externo reproducible", "AUC": 0.670, "AP": 0.694},
 ])
 
-display(metricas_ml)
+lecturas_metricas = {
+    "BST base": "Modelo base con estadísticas generales; sirve como comparación mínima.",
+    "Repertorio de movimientos + habilidades": "Agrega señales funcionales sobre recursos disponibles.",
+    "Grafo competitivo": "Agrega estructura relacional; puede contener señal fuerte, pero cercana al objetivo.",
+    "Experimento externo reproducible": "Evalúa predicción de enlaces como tarea separada y reproducible."
+}
+
+metricas_presentacion = metricas_ml.copy()
+metricas_presentacion["lectura"] = metricas_presentacion["variables"].map(lecturas_metricas)
+display(metricas_presentacion[["experimento", "variables", "lectura", "AUC", "AP"]])
+
 ax = metricas_ml.set_index('variables')[['AUC', 'AP']].plot.bar(figsize=(9, 4))
 ax.set_title('Resumen de métricas de modelos')
 ax.set_xlabel('Variables usadas')
@@ -725,37 +1308,43 @@ ax.set_ylabel('Valor de la métrica')
 plt.xticks(rotation=25, ha='right')
 plt.tight_layout()
 plt.show()
+
 base = metricas_ml.iloc[0]
 grafo = metricas_ml[metricas_ml['variables'] == 'Grafo competitivo'].iloc[0]
 display(Markdown(
     f"En las métricas de viabilidad OU, el punto de partida con {base['variables']} alcanza AUC={base['AUC']:.3f} y AP={base['AP']:.3f}, "
     f"mientras que la versión con {grafo['variables']} llega a AUC={grafo['AUC']:.3f} y AP={grafo['AP']:.3f}. "
-    "La mejora sugiere que las relaciones del grafo agregan información útil frente a mirar solo atributos aislados. Al mismo tiempo, un valor tan alto debe leerse con cautela, "
-    "porque las relaciones competitivas pueden estar muy cerca de la etiqueta de viabilidad que se busca predecir."
+    "La mejora sugiere que las relaciones del grafo agregan información útil frente a mirar solo atributos aislados. "
+    "Al mismo tiempo, un valor tan alto debe leerse con cautela: si las señales competitivas usadas por el modelo están muy cerca de la etiqueta, "
+    "el desempeño puede reflejar una señal parcialmente circular y no una predicción completamente independiente."
 ))
 
 print("Los experimentos completos de ML se reproducen fuera de este cuaderno con analysis/graph_ml_integrated.py.")
 """)
 
-md("""Las métricas AUC y AP resumen qué tan bien un modelo distingue casos
-positivos de negativos. En términos simples, valores más altos indican que el
-modelo ordena mejor los ejemplos relevantes por encima de los no relevantes.
-Aquí se comparan variables tabulares simples, como estadísticas base, contra
-variables que incorporan información relacional del grafo.
+md("""#### 6.3 Interpretación y cuidado metodológico
 
-El resultado sugiere que las conexiones competitivas agregan señal. Cuando se
-incluyen relaciones del grafo, las métricas mejoran frente a usar solo atributos
-aislados, lo que apoya la idea de que el grafo captura patrones que una tabla
-plana no muestra con la misma claridad. Para el análisis estratégico, esto
-significa que las relaciones entre Pokémon, movimientos, compañeros y formatos
-pueden aportar información útil sobre viabilidad o comportamiento competitivo.
+AUC mide qué tan bien el modelo separa casos compatibles de casos no
+compatibles. Un valor cercano a 0.5 sería parecido a adivinar al azar, mientras
+que un valor más cercano a 1.0 indica una mejor separación. AP resume qué tan
+bien el modelo prioriza los casos positivos, lo que resulta útil cuando hay
+muchas combinaciones posibles y solo algunas representan vínculos competitivos
+relevantes.
 
-La interpretación debe ser cuidadosa, sobre todo cuando aparecen valores muy
-altos. Si las relaciones competitivas usadas como variables están muy cerca de
-la etiqueta que se quiere predecir, el modelo puede beneficiarse de información
-demasiado directa. Por eso estas métricas son evidencia de que existe señal en
-el grafo, pero no una prueba definitiva de generalización a otros formatos o
-metajuegos futuros.
+Si el modelo con información de grafo mejora al modelo base, eso sugiere que la
+estructura relacional contiene señales que no aparecen con la misma claridad en
+una tabla plana. En términos estratégicos, el grafo puede ayudar a detectar
+pares o relaciones que parecen tener sentido competitivo porque comparten
+recursos, se conectan por caminos similares, pertenecen a comunidades cercanas o
+se relacionan con patrones observados del metajuego.
+
+Sin embargo, el resultado no debe leerse como prueba de que el grafo predice
+perfectamente equipos futuros. Cuando se incorporan relaciones competitivas muy
+cercanas a los datos de equipos, el modelo puede estar usando señales demasiado
+parecidas a la respuesta que se quiere estimar. Por eso, estas métricas son una
+evidencia de que el grafo captura estructura competitiva útil, pero no una
+garantía de predicción independiente ni una receta automática para construir
+equipos completos.
 """)
 
 md("""## 5. Machine Learning integrado
