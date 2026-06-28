@@ -807,7 +807,7 @@ tabla_individual = pd.DataFrame(filas_ind).sort_values(
 ).reset_index(drop=True)
 """)
 
-md("""#### 3.1 Perfiles de Pokémon de un solo tipo
+md("""#### 4.3.1 Perfiles de Pokémon de un solo tipo
 
 En los Pokémon de un solo tipo, la lectura es directa: el perfil ofensivo depende
 de lo que ese tipo puede golpear x2, mientras que el perfil defensivo depende de
@@ -844,7 +844,7 @@ if not tabla_individual.empty:
     ))
 """)
 
-md("""#### 3.2 Perfiles de Pokémon de dos tipos
+md("""#### 4.3.2 Perfiles de Pokémon de dos tipos
 
 Los Pokémon de dos tipos tienen una lectura más rica, pero también más riesgosa.
 Una combinación puede ampliar la cobertura ofensiva y sumar resistencias, aunque
@@ -924,7 +924,7 @@ if not tabla_doble.empty:
     ))
 """)
 
-md("""#### 3.3 Ventajas ofensivas x4 contra combinaciones reales
+md("""#### 4.3.3 Ventajas ofensivas x4 contra combinaciones reales
 
 Una ventaja x4 aparece cuando un tipo ofensivo golpea súper efectivo a los dos
 tipos de una combinación defensiva real. Esta vista es importante porque un tipo
@@ -973,7 +973,7 @@ if not tabla_x4.empty:
     ))
 """)
 
-md("""#### 3.4 Resistencias dobles x0.25
+md("""#### 4.3.4 Resistencias dobles x0.25
 
 También puede ocurrir lo contrario: si ambos tipos de una combinación resisten
 el mismo tipo ofensivo, el daño recibido se aproxima a x0.25. Esa resistencia
@@ -1012,7 +1012,7 @@ else:
     ))
 """)
 
-md("""#### 3.5 Comparación general entre perfiles individuales y dobles
+md("""#### 4.3.5 Comparación general entre perfiles individuales y dobles
 
 La comparación final junta perfiles individuales y dobles bajo una misma métrica
 de balance ajustado. En los tipos individuales, el balance resume cobertura x2,
@@ -1265,7 +1265,7 @@ compañeros frecuentes y señales de uso. Para que el resultado sea más útil, 
 limita la repetición de un mismo Pokémon y se priorizan cadenas diversas.
 """)
 
-md("""#### 5.1 Cadenas explicativas representativas
+md("""#### 4.5.1 Cadenas explicativas representativas
 
 Cada fila de esta tabla resume una cadena principal para un Pokémon distinto.
 Los movimientos y compañeros aparecen como listas, no como filas separadas, para
@@ -1363,7 +1363,7 @@ Para confirmar un conjunto real habría que revisar objeto, EVs, habilidad,
 formato y uso concreto en partidas.
 """)
 
-md("""#### 5.2 Ejemplos de cadenas concretas
+md("""#### 4.5.2 Ejemplos de cadenas concretas
 
 La tabla siguiente baja un nivel de detalle y muestra ejemplos específicos de
 Pokémon, movimiento y compañero frecuente. Se limita la repetición para mantener
@@ -1428,7 +1428,7 @@ sección muestra una variedad mayor de posibles funciones estratégicas y evita
 que el análisis quede dominado por una sola pieza muy usada.
 """)
 
-md("""### 4.6 Pregunta 6: ¿Puede el grafo anticipar compatibilidad competitiva entre Pokémon usando solo información no derivada del uso competitivo?
+md("""### 4.6 ¿Puede el grafo anticipar compatibilidad competitiva entre Pokémon usando solo información no derivada del uso competitivo?
 
 Esta pregunta evalúa el valor predictivo del grafo bajo una restricción
 metodológica más exigente. No se busca construir automáticamente un equipo
@@ -1447,7 +1447,7 @@ servir como etiqueta o como evaluación, pero no como explicación independiente
 del modelo.
 """)
 
-md("""#### 6.1 Variables usadas y excluidas para evitar fuga de información
+md("""#### 4.6.1 Variables usadas y excluidas para evitar fuga de información
 
 La siguiente tabla separa las variables que sí se usan en el modelo principal de
 las que se excluyen para evitar fuga de información. `TEAMMATE_OF` se usa como
@@ -1504,7 +1504,7 @@ code("""variables_fuga = pd.DataFrame([
 display(variables_fuga)
 """)
 
-md("""#### 6.2 Experimento predictivo sin fuga de información
+md("""#### 4.6.2 Experimento predictivo 
 
 El experimento principal usa `TEAMMATE_OF` como etiqueta: un par positivo
 corresponde a dos Pokémon conectados por esa relación, mientras que un par
@@ -1543,7 +1543,7 @@ if resultados_ml_seguro.get('resultados'):
     display(metricas_seguras[columnas_metricas])
 
     ax = metricas_seguras.set_index('bloque')[['auc', 'ap']].plot.bar(figsize=(9, 4))
-    ax.set_title('Métricas del experimento sin fuga')
+    ax.set_title('Métricas del experimento')
     ax.set_xlabel('Bloque de variables')
     ax.set_ylabel('Valor de la métrica')
     plt.xticks(rotation=20, ha='right')
@@ -1567,65 +1567,44 @@ else:
 print("Las métricas de ML se calculan fuera de este cuaderno con analysis/graph_ml_integrated.py.")
 """)
 
-md("""#### 6.3 Control con fuga de información: por qué no se usa como evidencia principal
+md("""#### 4.6.3 Control con fuga de información
 
-El reporte conserva como referencia metodológica el resultado antiguo de
-viabilidad OU con señales de grafo competitivo. Ese resultado era alto
-(`AUC=0.986`, `AP=0.970`), pero usaba información demasiado cercana al objetivo:
-relaciones de compañeros, uso competitivo, movimientos usados en Smogon y otras
-señales derivadas del mismo fenómeno que se buscaba predecir. Por eso puede
-inflar las métricas y no debe interpretarse como predicción independiente.
+Durante el desarrollo del análisis se evaluó una versión inicial del experimento que incorporaba señales competitivas demasiado cercanas al objetivo, como relaciones de compañeros, uso observado, movimientos usados en Smogon y otras variables derivadas del mismo fenómeno que se buscaba predecir. Aunque ese enfoque podía producir resultados aparentemente mejores, no era metodológicamente adecuado para evaluar predicción independiente, porque el modelo recibía información muy próxima a la respuesta.
 
-La comparación es útil precisamente porque muestra por qué el control de fuga es
-necesario. Un resultado más bajo en el experimento sin fuga no es un fracaso
-metodológico: es esperable cuando el modelo deja de mirar señales cercanas a la
-respuesta. Si aun así el desempeño queda por encima del azar, la conclusión es
-más confiable aunque sea más modesta.
+Por esa razón, el reporte no usa esa versión como evidencia principal. En su lugar, la pregunta 6 se reformula como un experimento sin fuga de información, donde la relación TEAMMATE_OF se usa como etiqueta a predecir, pero no como variable de entrada ni a través de métricas derivadas de ella.
+
+La comparación es útil porque muestra por qué el control de fuga es necesario. Un resultado más moderado en el experimento sin fuga no debe interpretarse como un fracaso metodológico; al contrario, es esperable cuando el modelo deja de mirar señales cercanas a la respuesta. Si aun así el desempeño queda por encima del azar, la conclusión es más confiable aunque sea más modesta.
 """)
 
-md("""#### 6.4 Interpretación de AUC, AP y resultados
+md("""#### 4.6.4 Interpretación de AUC, AP y resultados
 
-AUC mide qué tan bien el modelo separa casos compatibles de casos no
-compatibles. Un valor cercano a 0.5 sería parecido a adivinar al azar, mientras
-que un valor más cercano a 1.0 indica una mejor separación. AP resume qué tan
-bien el modelo prioriza los casos positivos, lo que resulta útil cuando hay
-muchas combinaciones posibles y solo algunas representan vínculos competitivos
-relevantes.
+AUC mide qué tan bien el modelo separa pares de Pokémon observados como compatibles de pares no conectados por `TEAMMATE_OF`. Un valor cercano a 0.5 indica un comportamiento similar a adivinar al azar, mientras que valores más altos muestran una mejor capacidad de separación. AP resume qué tan bien el modelo prioriza los casos positivos, lo que es útil en este problema porque existen muchas combinaciones posibles de Pokémon y solo una parte pequeña aparece como vínculo competitivo observado.
 
-En este diseño, las métricas deben leerse de manera más exigente que en el
-experimento anterior. El modelo ya no usa `TEAMMATE_OF`, uso Smogon ni variables
-derivadas de equipos observados como entrada; solo usa atributos propios del
-Pokémon y relaciones base como tipos, estadísticas, habilidades y `CAN_LEARN`.
-Por eso, si las métricas bajan frente al control con fuga, esa caída es esperable
-y metodológicamente saludable: el modelo dejó de usar pistas demasiado parecidas
-a la respuesta.
+En términos simples, estas métricas no deben leerse como una nota ni como un porcentaje de acierto directo. Por ejemplo, un AUC de 0.68 no significa que el modelo “acierta un 68% de los equipos”, sino que, al comparar pares compatibles y no compatibles, el modelo tiende a ordenar mejor los pares realmente observados como compatibles. De la misma forma, un AP cercano a 0.69 indica que el modelo logra priorizar varios casos positivos por sobre combinaciones no observadas, aunque todavía está lejos de ser una predicción perfecta.
 
-Si el desempeño del bloque completo sin fuga supera al baseline de stats, la
-lectura razonable es que el grafo base contiene una señal parcial de
-compatibilidad. No significa que pueda construir equipos completos ni reemplazar
-criterio competitivo, pero sí que la combinación de atributos, tipos, habilidades
-y movepool disponible aporta más información que mirar estadísticas aisladas. Un
-resultado moderado, cuando está bien controlado, es más defendible que una métrica
-muy alta obtenida con señales circulares.
+En este experimento, las métricas deben leerse como una evaluación controlada y conservadora. El modelo no usa `TEAMMATE_OF`, Smogon, relaciones de compañeros, movimientos usados competitivamente ni métricas derivadas de equipos observados como variables de entrada. En cambio, se apoya en atributos propios del Pokémon y relaciones base del grafo, como tipos, estadísticas, habilidades y movimientos aprendibles mediante `CAN_LEARN`.
+
+Por eso, el objetivo no es obtener una predicción perfecta de equipos competitivos, sino evaluar si el grafo base contiene una señal parcial de compatibilidad. Si el bloque completo sin fuga supera al baseline de estadísticas, la lectura razonable es que combinar tipos, habilidades y movepool disponible aporta más información que mirar estadísticas aisladas.
+
+El resultado debe interpretarse con cautela: no significa que el modelo pueda construir equipos completos ni reemplazar criterio competitivo experto. Más bien, muestra que el grafo puede transformar información dispersa en variables comparables para estimar compatibilidad de manera más informada. En este contexto, un desempeño moderado es metodológicamente más defendible que una métrica artificialmente alta obtenida usando señales demasiado cercanas a la respuesta.
+
 """)
 
 md("""## 5. Machine Learning integrado
 
-El bloque de ML se conserva como resumen de métricas. La lógica completa vive en
-`analysis/graph_ml_integrated.py` y debe ejecutarse por separado cuando se quiera
-reproducir el experimento completo.
+El bloque de machine learning se conserva como una síntesis del experimento predictivo de la pregunta 6. La lógica completa vive en `analysis/graph_ml_integrated.py` y debe ejecutarse por separado cuando se quiera reproducir el experimento completo.
 
-El resumen compara:
+El objetivo del experimento es evaluar si atributos y relaciones base del grafo permiten anticipar parcialmente la compatibilidad competitiva entre pares de Pokémon, usando `TEAMMATE_OF` como etiqueta a predecir. Para evitar fuga de información, el modelo no utiliza como entrada relaciones de compañeros, uso competitivo observado, movimientos usados en Smogon ni métricas derivadas directamente de la red competitiva que se busca predecir.
 
-- predicción de `TEAMMATE_OF` con baseline de stats,
-- predicción de `TEAMMATE_OF` agregando tipos, habilidades y movepool disponible por `CAN_LEARN`,
-- un control metodológico con fuga probable, conservado solo para explicar por qué no debe usarse como evidencia principal.
+El resumen compara distintos bloques de variables:
 
-No se ejecuta el archivo completo dentro del cuaderno para evitar aumentar el
-tiempo de `nbconvert` y para mantener separado el reporte narrativo del
-experimento reproducible. La métrica alta del bloque antiguo con grafo
-competitivo no se usa como conclusión predictiva principal, porque incluye
-señales derivadas del uso competitivo observado.
+* baseline de estadísticas base;
+* estadísticas más tipos;
+* estadísticas más movepool disponible mediante `CAN_LEARN`;
+* grafo base sin fuga, combinando estadísticas, tipos, habilidades y movepool disponible.
+
+No se ejecuta el archivo completo dentro del cuaderno para evitar aumentar el tiempo de `nbconvert` y para mantener separado el reporte narrativo del experimento reproducible. La interpretación de las métricas debe leerse de forma metodológicamente conservadora: el experimento no busca demostrar una predicción perfecta de equipos, sino evaluar si el grafo base contiene una señal parcial de compatibilidad sin usar directamente la respuesta como entrada.
+
 """)
 
 md("""## 6. Conclusiones
